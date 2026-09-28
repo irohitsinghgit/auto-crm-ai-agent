@@ -33,6 +33,14 @@ function matchVariant(model: VehicleModel, input: string): Variant | null {
   return candidates[0] ?? null;
 }
 
+// Canonical "Model Variant" label for CRM records, e.g. "xuv 700 ax7" -> "XUV700 AX7".
+export function vehicleLabel(input: string): string | null {
+  const model = matchModel(input);
+  if (!model) return null;
+  const variant = matchVariant(model, input);
+  return variant ? `${model.model} ${variant.name}` : model.model;
+}
+
 export function getVehicleInfo(modelInput: string, variantInput?: string) {
   const model = matchModel(modelInput);
   if (!model) {
