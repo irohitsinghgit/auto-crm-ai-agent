@@ -63,6 +63,10 @@ export function deleteSession(id: string) {
   sessions.delete(id);
 }
 
+export function hasTestDriveEnquiry(session: Session): boolean {
+  return [...session.createdRecords.keys()].some((key) => key.startsWith('lead:'));
+}
+
 export function toolContext(session: Session): ToolContext {
   return {
     knownContactIds: session.knownContactIds,

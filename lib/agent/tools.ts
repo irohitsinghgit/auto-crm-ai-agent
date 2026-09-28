@@ -225,12 +225,13 @@ const tools: Record<string, Tool> = {
 
       const [existing] = await crm.findLeadsByPhone(lead.phone);
       if (existing) {
-        return {
-          ok: true,
+        const result = {
           status: 'already_registered',
           message: 'An enquiry with this phone number already exists; the sales team will use it.',
           lead: { name: existing.name, vehicle_model: existing.vehicleModel, city: existing.city },
         };
+        ctx.createdRecords.set(key, result);
+        return { ok: true, ...result };
       }
 
       await crm.createLead({ ...lead, description: 'Test drive enquiry from the website chat assistant.' });

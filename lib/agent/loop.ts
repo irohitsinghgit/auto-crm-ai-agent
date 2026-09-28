@@ -1,8 +1,10 @@
 import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions';
 import { complete } from './llm';
-import { buildSystemPrompt } from './prompt';
+import { buildSystemPrompt, testDrivePitch } from './prompt';
 import { executeTool, toolStage, toolStatus, type Stage } from './tools';
-import { appendHistory, toolContext, type Session } from '../session';
+import { appendHistory, hasTestDriveEnquiry, toolContext, type Session } from '../session';
+
+const TEST_DRIVE_MENTION = /test[\s-]?drive/i;
 
 const MAX_ROUNDS = 5;
 
@@ -62,18 +64,30 @@ export async function runAgentTurn(session: Session, userMessage: string, emit: 
 
   const ctx = toolContext(session);
   const turn: ChatCompletionMessageParam[] = [{ role: 'user', content: userMessage }];
+  let answeredVehicleQuestion = false;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const system: ChatCompletionMessageParam = { role: 'system', content: buildSystemPrompt(session.stage, session.collected) };
-    const { content, toolCalls } = await complete([system, ...session.history, ...turn], {
+    const prompt = buildSystemPrompt({
+      stage: session.stage,
+      collected: session.collected,
+      testDriveRegistered: hasTestDriveEnquiry(session),
+    });
+    const { content, toolCalls } = await complete([{ role: 'system', content: prompt }, ...session.history, ...turn], {
       allowTools: round < MAX_ROUNDS - 1,
       signal,
       onText: (delta) => emit({ type: 'text', delta }),
     });
 
     if (!toolCalls.length) {
-      const reply = content.trim() || 'Sorry, I could not put together an answer. Could you rephrase that?';
+      let reply = content.trim() || 'Sorry, I could not put together an answer. Could you rephrase that?';
       if (!content.trim()) emit({ type: 'text', delta: reply });
+
+      // Backstop for the prompt's test drive rule: a vehicle answer always ends with the pitch.
+      if (answeredVehicleQuestion && !hasTestDriveEnquiry(session) && !TEST_DRIVE_MENTION.test(reply)) {
+        const pitch = `\n\n${testDrivePitch(session.collected.customer)}`;
+        emit({ type: 'text', delta: pitch });
+        reply += pitch;
+      }
       finishTurn(session, userMessage, reply, emit);
       return;
     }
@@ -85,6 +99,7 @@ export async function runAgentTurn(session: Session, userMessage: string, emit: 
       emit({ type: 'tool_start', id: call.id, name, status: toolStatus(name) });
       const result = await executeTool(name, call.function.arguments, ctx);
       emit({ type: 'tool_end', id: call.id, name, ok: result.ok === true });
+      if (name === 'get_vehicle_info' && result.ok) answeredVehicleQuestion = true;
       turn.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
     }
   }

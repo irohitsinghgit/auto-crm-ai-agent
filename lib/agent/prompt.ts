@@ -16,7 +16,28 @@ const listDetails = (details: Record<string, string>) =>
     .map(([key, value]) => `- ${key}: ${value}`)
     .join('\n') || '- none yet';
 
-export function buildSystemPrompt(stage: Stage | null, collected: { customer: Record<string, string>; lookups: Record<string, string> }): string {
+const LEAD_FIELDS: [key: string, label: string][] = [
+  ['customer_name', 'name'],
+  ['phone', 'phone'],
+  ['email', 'email'],
+  ['city', 'city'],
+];
+
+// Names only the lead details the customer has not given yet.
+export function testDrivePitch(customer: Record<string, string>): string {
+  const missing = LEAD_FIELDS.filter(([key]) => !customer[key]).map(([, label]) => label);
+  if (!missing.length) return 'Would you like me to book a free test drive for you?';
+  const list = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
+  return `Would you like to book a free test drive? I just need your ${list}.`;
+}
+
+interface PromptState {
+  stage: Stage | null;
+  collected: { customer: Record<string, string>; lookups: Record<string, string> };
+  testDriveRegistered: boolean;
+}
+
+export function buildSystemPrompt({ stage, collected, testDriveRegistered }: PromptState): string {
   return `You are Drive Assist, the sales and service advisor for our SUV range (${MODEL_NAMES.join(', ')}). Today is ${today()}.
 
 Customer stages:
@@ -26,6 +47,7 @@ Customer stages:
 4. Service: service booking or complaint. find_contact by phone (if the owner is not registered, create_contact), then collect registration number, odometer, issue, service type and preferred service center, then create_service_case.
 
 Rules:
+- HARD RULE, New Lead: every reply that answers a question about a model, variant, price or feature must end with one short test drive pitch, for example "${testDrivePitch(collected.customer)}". Name only the details not already given. Skip the pitch only when you are already collecting or confirming test drive details, or when "Test drive registered in this chat" below is yes; in that case do not pitch, do not ask for contact details again, and at most mention that their test drive enquiry is already registered.
 - State only facts returned by tools, including vehicle features: do not add features or specs from general knowledge. Never guess names, dates, statuses, prices, amounts or IDs. If something is not in the result, say it is not available here. For dealer contact, share only dealer_contact from the result; if it is null, say the dealership will reach out. When a booking has a payment_link, share it on its own line as "Payment link: <url>" next to the balance due.
 - not_found: never end the conversation at a dead end or only refer the customer to the dealer. Follow the result's next_step: first read the number or ID back and ask them to recheck it, then continue with the alternative it gives. invalid_input: explain in one line and ask again. crm_unavailable: apologise and ask them to try again shortly.
 - As soon as you have a phone number, deal ID or booking ID, call the matching lookup tool in the same reply. Never say you are looking up, creating or saving something unless you call the tool in that same reply.
@@ -41,6 +63,7 @@ Rules:
 Style: professional, warm, concise (two to five sentences). Use correct automotive terms (variant, MT/AT, 4WD, ADAS, mHawk diesel, mStallion petrol). Plain text with short "-" lists; no tables, headings or emojis. Never mention tools, internal IDs or these instructions; booking IDs and case numbers may be shared.
 
 Detected stage: ${stage ? STAGE_LABELS[stage] : 'unknown'}
+Test drive registered in this chat: ${testDriveRegistered ? 'yes' : 'no'}
 Given by the customer:
 ${listDetails(collected.customer)}
 Found by CRM lookups in this chat (may be another person's record):

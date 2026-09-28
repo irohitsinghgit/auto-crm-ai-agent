@@ -1,6 +1,10 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
+import rehypeSanitize from 'rehype-sanitize';
 import type { AgentEvent } from '@/lib/agent/loop';
 import type { Stage } from '@/lib/agent/tools';
 import styles from './page.module.css';
@@ -36,45 +40,18 @@ const SUGGESTIONS = [
 
 const newId = () => crypto.randomUUID();
 
-// Minimal formatting for model output: paragraphs, "-" or "1." lists, **bold** and https links.
-function renderInline(text: string): ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*|https:\/\/[^\s)<>]+[^\s)<>.,;:!?])/g).map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) return <strong key={i}>{renderInline(part.slice(2, -2))}</strong>;
-    if (part.startsWith('https://')) {
-      return (
-        <a key={i} href={part} target="_blank" rel="noopener noreferrer">
-          {part}
-        </a>
-      );
-    }
-    return <Fragment key={i}>{part}</Fragment>;
-  });
-}
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+};
 
-function FormattedText({ text }: { text: string }) {
-  const blocks = text.trim().split(/\n{2,}/);
+// Model output is markdown: raw HTML is dropped, the rendered tree is sanitised, and single newlines stay line breaks.
+function Markdown({ text }: { text: string }) {
   return (
-    <>
-      {blocks.map((block, i) => {
-        const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
-        const isList = lines.length > 0 && lines.every((l) => /^([-*•]|\d+[.)])\s+/.test(l));
-        if (isList) {
-          const ordered = /^\d/.test(lines[0]);
-          const items = lines.map((l, j) => <li key={j}>{renderInline(l.replace(/^([-*•]|\d+[.)])\s+/, ''))}</li>);
-          return ordered ? <ol key={i}>{items}</ol> : <ul key={i}>{items}</ul>;
-        }
-        return (
-          <p key={i}>
-            {lines.map((line, j) => (
-              <Fragment key={j}>
-                {j > 0 && <br />}
-                {renderInline(line)}
-              </Fragment>
-            ))}
-          </p>
-        );
-      })}
-    </>
+    <div className={styles.markdown}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeSanitize]} skipHtml components={MARKDOWN_COMPONENTS}>
+        {text}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -257,7 +234,7 @@ export default function ChatPage() {
                   </div>
                 )}
                 {m.text ? (
-                  m.role === 'assistant' ? <FormattedText text={m.text} /> : <p>{m.text}</p>
+                  m.role === 'assistant' ? <Markdown text={m.text} /> : <p>{m.text}</p>
                 ) : (
                   !m.error && m.tools.every((t) => t.state !== 'running') && <span className={styles.typing} aria-label="Assistant is typing" />
                 )}
