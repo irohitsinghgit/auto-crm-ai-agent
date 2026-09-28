@@ -12,6 +12,7 @@ export interface Session {
   collected: Record<string, string>;
   knownContactIds: Set<string>;
   knownDealIds: Set<string>;
+  unmatchedPhones: Set<string>;
   createdRecords: Map<string, Record<string, unknown>>;
   busy: boolean;
   updatedAt: number;
@@ -44,6 +45,7 @@ export function getSession(id: string): Session {
       collected: {},
       knownContactIds: new Set(),
       knownDealIds: new Set(),
+      unmatchedPhones: new Set(),
       createdRecords: new Map(),
       busy: false,
       updatedAt: Date.now(),
@@ -62,6 +64,7 @@ export function toolContext(session: Session): ToolContext {
   return {
     knownContactIds: session.knownContactIds,
     knownDealIds: session.knownDealIds,
+    unmatchedPhones: session.unmatchedPhones,
     createdRecords: session.createdRecords,
     remember(details) {
       for (const [key, value] of Object.entries(details)) {

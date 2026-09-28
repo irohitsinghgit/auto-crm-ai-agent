@@ -10,6 +10,8 @@ export type Stage = 'new_lead' | 'pipeline' | 'booked' | 'service';
 export interface ToolContext {
   knownContactIds: Set<string>;
   knownDealIds: Set<string>;
+  // Phones searched without a match; only these may be registered as new contacts.
+  unmatchedPhones: Set<string>;
   // Records created in this session, keyed by content, so a repeated tool call cannot create duplicates.
   createdRecords: Map<string, Record<string, unknown>>;
   remember: (details: Record<string, string | undefined>) => void;
@@ -37,7 +39,17 @@ const ALLOCATION_MEANING: Record<string, string> = {
 
 const rupees = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
 
-const notFound = (message: string): ToolResult => ({ ok: false, error: 'not_found', message });
+const notFound = (message: string, nextStep: string): ToolResult => ({ ok: false, error: 'not_found', message, next_step: nextStep });
+
+// The first miss on a number asks for a recheck; a repeat miss moves on to the fallback so the customer is not asked twice.
+function phoneNotFound(repeatMiss: boolean, fallback: string): ToolResult {
+  return notFound(
+    'No customer is registered with this phone number.',
+    repeatMiss
+      ? `The customer has already rechecked this number; do not ask again. Instead, ${fallback}`
+      : `Read the number back and ask the customer to recheck it. If they confirm it is correct, ${fallback}`,
+  );
+}
 
 function describeDeal(deal: crm.Deal) {
   return {
@@ -70,16 +82,21 @@ function describeBooking(deal: crm.Deal) {
 }
 
 async function contactsByPhone(phone: string, ctx: ToolContext) {
+  const repeatMiss = ctx.unmatchedPhones.has(phone);
   const contacts = await crm.findContactsByPhone(phone);
   contacts.forEach((c) => ctx.knownContactIds.add(c.id));
-  if (contacts[0]) ctx.remember({ customer_name: contacts[0].name, phone });
-  return contacts;
+  if (contacts[0]) {
+    ctx.remember({ customer_name: contacts[0].name, phone });
+  } else {
+    ctx.unmatchedPhones.add(phone);
+  }
+  return { contacts, repeatMiss };
 }
 
 async function dealsByPhone(phone: string, ctx: ToolContext) {
-  const contacts = await contactsByPhone(phone, ctx);
+  const { contacts, repeatMiss } = await contactsByPhone(phone, ctx);
   const deals = (await Promise.all(contacts.map((c) => crm.findDealsByContact(c.id)))).flat();
-  return { contacts, deals };
+  return { contacts, deals, repeatMiss };
 }
 
 function requireOne(args: Args, fields: string[]) {
@@ -106,7 +123,9 @@ const tools: Record<string, Tool> = {
     },
     async handler(args, ctx) {
       const info = getVehicleInfo(validate.text(args.model, 'model', 60), args.variant ? validate.text(args.variant, 'variant', 30) : undefined);
-      if (!info.found) return { ok: false, error: 'not_found', ...info };
+      if (!info.found) {
+        return { ok: false, error: 'not_found', ...info, next_step: 'Tell the customer which models are available and ask which one interests them.' };
+      }
       ctx.remember({ vehicle_interest: 'variant' in info ? `${info.model} ${info.variant.name}` : info.model });
       return { ok: true, ...info };
     },
@@ -192,13 +211,22 @@ const tools: Record<string, Tool> = {
 
       if (args.deal_id) {
         const deal = await crm.getDeal(validate.recordId(args.deal_id, 'deal_id'));
-        if (!deal) return notFound('No deal exists with this ID.');
+        if (!deal) {
+          return notFound('No deal exists with this ID.', 'Ask the customer to recheck the deal ID or share their registered mobile number instead.');
+        }
         deals = [deal];
       } else {
         const phone = validate.phone(args.phone);
         const result = await dealsByPhone(phone, ctx);
-        if (!result.contacts.length) return notFound('No customer is registered with this phone number.');
-        if (!result.deals.length) return notFound('The customer exists but has no deals on record.');
+        if (!result.contacts.length) {
+          return phoneNotFound(result.repeatMiss, 'ask for their deal ID, or offer to register a fresh test drive enquiry with create_lead.');
+        }
+        if (!result.deals.length) {
+          return notFound(
+            'The customer is registered but has no open enquiry.',
+            'Offer to register a new test drive enquiry with create_lead, reusing the details already known.',
+          );
+        }
         deals = result.deals;
       }
 
@@ -255,16 +283,25 @@ const tools: Record<string, Tool> = {
       if (args.booking_id) {
         const bookingId = validate.bookingId(args.booking_id);
         deals = await crm.findDealsByBookingId(bookingId);
-        if (!deals.length) return notFound(`No booking found with ID ${bookingId}.`);
+        if (!deals.length) {
+          return notFound(`No booking found with ID ${bookingId}.`, 'Ask the customer to recheck the booking ID or share their registered mobile number instead.');
+        }
       } else {
-        const { contacts, deals: all } = await dealsByPhone(validate.phone(args.phone), ctx);
-        if (!contacts.length) return notFound('No customer is registered with this phone number.');
+        const { contacts, deals: all, repeatMiss } = await dealsByPhone(validate.phone(args.phone), ctx);
+        if (!contacts.length) {
+          return phoneNotFound(repeatMiss, 'ask for the booking ID from their booking receipt.');
+        }
         deals = all;
       }
 
       const booked = deals.filter((d) => d.stage === crm.BOOKED_STAGE);
       if (!booked.length) {
-        return notFound(`No confirmed booking on record. Current deal stage: ${deals[0]?.stage ?? 'none'}.`);
+        return notFound(
+          `No confirmed booking on record. Current enquiry stage: ${deals[0]?.stage ?? 'none'}.`,
+          deals.length
+            ? 'Tell the customer their enquiry is not yet booked and offer to share its status using find_deal.'
+            : 'Offer to register a new enquiry with create_lead.',
+        );
       }
 
       booked.forEach((d) => ctx.knownDealIds.add(d.id));
@@ -287,10 +324,58 @@ const tools: Record<string, Tool> = {
     },
     async handler(args, ctx) {
       const phone = validate.phone(args.phone);
-      const contacts = await contactsByPhone(phone, ctx);
-      if (!contacts.length) return notFound('No registered owner found with this phone number.');
+      const { contacts, repeatMiss } = await contactsByPhone(phone, ctx);
+      if (!contacts.length) {
+        return phoneNotFound(
+          repeatMiss,
+          'collect their full name and email (skip any already given), confirm, register them with create_contact, then continue with the service case.',
+        );
+      }
       ctx.remember({ contact_id: contacts.length === 1 ? contacts[0].id : undefined });
       return { ok: true, contacts: contacts.map((c) => ({ contact_id: c.id, name: c.name, email: c.email })) };
+    },
+  },
+
+  create_contact: {
+    stage: 'service',
+    status: 'Registering customer',
+    definition: {
+      name: 'create_contact',
+      description: 'Register a vehicle owner who is not in the CRM so a service case can be logged. Use only after find_contact found no match for a rechecked number, and after the customer confirms their details.',
+      parameters: {
+        type: 'object',
+        properties: {
+          first_name: { type: 'string' },
+          last_name: { type: 'string' },
+          phone: { type: 'string', description: 'The 10-digit mobile number that find_contact did not match' },
+          email: { type: 'string' },
+        },
+        required: ['first_name', 'last_name', 'phone', 'email'],
+      },
+    },
+    async handler(args, ctx) {
+      const contact = {
+        firstName: validate.personName(args.first_name, 'first_name'),
+        lastName: validate.personName(args.last_name, 'last_name'),
+        phone: validate.phone(args.phone),
+        email: validate.email(args.email),
+      };
+      if (!ctx.unmatchedPhones.has(contact.phone)) {
+        return { ok: false, error: 'unverified_phone', message: 'Search this number with find_contact before registering a new customer.' };
+      }
+
+      const key = `contact:${contact.phone}`;
+      const created = ctx.createdRecords.get(key);
+      if (created) return { ok: true, already_created_in_this_chat: true, ...created };
+
+      const [existing] = await crm.findContactsByPhone(contact.phone);
+      const contactId = existing?.id ?? (await crm.createContact(contact));
+      ctx.knownContactIds.add(contactId);
+      ctx.remember({ customer_name: `${contact.firstName} ${contact.lastName}`, phone: contact.phone, email: contact.email, contact_id: contactId });
+
+      const result = { status: existing ? 'already_registered' : 'created', contact_id: contactId, name: `${contact.firstName} ${contact.lastName}` };
+      ctx.createdRecords.set(key, result);
+      return { ok: true, ...result };
     },
   },
 
@@ -299,11 +384,11 @@ const tools: Record<string, Tool> = {
     status: 'Creating service request',
     definition: {
       name: 'create_service_case',
-      description: 'Log a service booking or complaint for a registered owner. Call only after find_contact and after the customer has confirmed the details.',
+      description: 'Log a service booking or complaint for an owner. Call only with a contact from find_contact or create_contact, and after the customer has confirmed the details.',
       parameters: {
         type: 'object',
         properties: {
-          contact_id: { type: 'string', description: 'contact_id returned by find_contact' },
+          contact_id: { type: 'string', description: 'contact_id returned by find_contact or create_contact' },
           registration_no: { type: 'string', description: 'Vehicle registration number, e.g. MH12AB1234' },
           odometer: { type: 'string', description: 'Odometer reading in km' },
           issue: { type: 'string', description: 'Customer\'s description of the issue or work needed' },
@@ -316,7 +401,7 @@ const tools: Record<string, Tool> = {
     async handler(args, ctx) {
       const contactId = validate.recordId(args.contact_id, 'contact_id');
       if (!ctx.knownContactIds.has(contactId)) {
-        return { ok: false, error: 'unverified_contact', message: 'Look up the owner with find_contact before creating a case.' };
+        return { ok: false, error: 'unverified_contact', message: 'Look up the owner with find_contact (or register them with create_contact) before creating a case.' };
       }
       const serviceType = validate.text(args.service_type, 'service_type', 40);
       if (!SERVICE_TYPES.includes(serviceType)) {

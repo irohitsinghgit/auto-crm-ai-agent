@@ -11,7 +11,7 @@ The agent detects where a customer is in the lifecycle, answers from a local veh
 | New Lead | Models, variants, prices, features | Answers from `data/vehicles.json`, offers a test drive, collects name, phone, email and city, confirms, creates the lead | Create Lead |
 | Ongoing Pipeline | Test drive confirmation, quotation, dealer contact | Finds the deal by phone or deal ID, reports stage, test drive time, quotation and dealer, saves follow-up preference | Search Contacts/Deals, update Deal |
 | Booked Vehicle | Delivery, allocation, balance payment | Finds the Closed Won deal by booking ID or phone and reports Allocation Status | Search Deals |
-| Service | Service booking or complaint | Finds the owner by phone, collects registration no, odometer, issue, service type and service center, confirms, creates the case | Search Contacts, create Case |
+| Service | Service booking or complaint | Finds the owner by phone (registers them as a new contact if not found), collects registration no, odometer, issue, service type and service center, confirms, creates the case and shares its case number | Search/create Contact, create Case |
 
 ## Architecture
 
@@ -66,6 +66,8 @@ Requires Node.js 20.6 or later.
    - Leads: Vehicle Model, Preferred City
    - Deals: Vehicle Model, Booking ID, Allocation Status, Test Drive Time, Follow Up Preference
    - Cases: Registration No, Odometer, Service Center
+
+   To give customers short case numbers such as `CS-1001`, open Setup > Customization > Modules and Fields > Cases, edit the Case Number field and set a prefix and starting number. Without this, Zoho generates long numeric case numbers.
 2. Open https://api-console.zoho.in, add a **Self Client**, and note the client ID and secret.
 3. Under **Generate Code**, use the scope `ZohoCRM.modules.ALL,ZohoCRM.settings.fields.READ` and generate a grant code.
 4. Exchange the grant code for a refresh token within its validity window:
@@ -161,11 +163,21 @@ These are from test runs against the live CRM; replies are shortened.
 > **User:** Yes, that's correct
 > **Agent:** *(Creating service request)* Your service case has been created with status New. The workshop will contact you to schedule an appointment.
 
+**Service for an owner not yet in the CRM**
+
+> **User:** My XUV700's AC is not cooling, I want to book a service. My number is 9811199988
+> **Agent:** *(Looking up customer)* I couldn't find 9811199988 in our system. Could you confirm the number is correct?
+> **User:** Yes, 98111 99988 is correct. I'm Sanjay Rao, sanjay.rao@example.com
+> **Agent:** Name: Sanjay Rao, Mobile: 9811199988, Email: sanjay.rao@example.com. May I register you with these details?
+> **User:** Yes please
+> **Agent:** *(Registering customer)* You're registered. Could you share your registration number and odometer reading?
+
 ## Design notes
 
 - **Grounded answers.** Vehicle facts come only from the catalog and customer data only from tool results. Booking results state explicitly what the CRM does not hold (VIN, delivery date, balance payment) so the model has nothing to fill in.
 - **Validation.** Tools validate and normalise input (Indian mobile numbers with or without +91, email, `MAH-1234` booking IDs, registration numbers including BH series, odometer). Failures return `invalid_input` with the field and a reason so the model asks again.
-- **Write safeguards.** `update_deal_followup` and `create_service_case` only accept deal and contact IDs returned by a lookup earlier in the same session. Leads are de-duplicated by phone, and repeated create calls within a session return the existing record. The prompt requires an explicit confirmation before any create.
+- **No dead ends.** Every not-found result carries a `next_step`. The first miss on a phone number asks the customer to recheck it; a repeat miss moves on: asking for a deal or booking ID, offering a new enquiry, or registering a new contact in the service flow.
+- **Write safeguards.** `update_deal_followup` and `create_service_case` only accept deal and contact IDs returned by a lookup earlier in the same session, and `create_contact` only accepts a phone number that was searched and not found. Leads are de-duplicated by phone, and repeated create calls within a session return the existing record. The prompt requires an explicit confirmation before any create.
 - **Zoho token handling.** The access token is cached in memory and refreshed 5 minutes before expiry; concurrent requests share one refresh; a 401 triggers one refresh and retry. HTTP 204 from search is treated as not found.
 - **Session state.** An in-memory Map keyed by session ID holds history, detected stage, collected details and verified CRM IDs. Sessions expire after 2 hours of inactivity. Only user messages and final replies are kept across turns; facts needed later (customer name, phone, deal, contact and booking IDs) are carried in the system prompt as known details.
 - **Stage detection.** A keyword pass gives the UI an immediate stage; the stage of any tool the model calls then confirms or corrects it.
