@@ -1,11 +1,10 @@
-import Groq from 'groq-sdk';
-import type { ChatCompletionMessageParam, ChatCompletionMessageToolCall } from 'groq-sdk/resources/chat/completions';
+import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions';
+import { complete } from './llm';
 import { buildSystemPrompt } from './prompt';
-import { executeTool, toolDefinitions, toolStage, toolStatus, type Stage } from './tools';
+import { executeTool, toolStage, toolStatus, type Stage } from './tools';
 import { appendHistory, toolContext, type Session } from '../session';
 
 const MAX_ROUNDS = 5;
-const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 
 export type AgentEvent =
   | { type: 'stage'; stage: Stage }
@@ -16,10 +15,6 @@ export type AgentEvent =
   | { type: 'error'; message: string };
 
 type Emit = (event: AgentEvent) => void;
-
-let client: Groq | null = null;
-// One retry only: on rate limits a quick, retryable error beats a silent wait of up to a minute.
-const groq = () => (client ??= new Groq({ apiKey: process.env.GROQ_API_KEY, maxRetries: 1, timeout: 30_000 }));
 
 const STAGE_SIGNALS: Record<Stage, RegExp[]> = {
   booked: [
@@ -56,57 +51,6 @@ export function detectStage(message: string, current: Stage | null): Stage | nul
   return best ?? current;
 }
 
-async function streamCompletion(
-  messages: ChatCompletionMessageParam[],
-  { allowTools, signal, onText }: { allowTools: boolean; signal?: AbortSignal; onText: (delta: string) => void },
-) {
-  const model = process.env.GROQ_MODEL || DEFAULT_MODEL;
-  const stream = await groq().chat.completions.create(
-    {
-      model,
-      messages,
-      tools: toolDefinitions,
-      tool_choice: allowTools ? 'auto' : 'none',
-      temperature: 0.3,
-      stream: true,
-      // Tool routing needs little deliberation; low effort keeps gpt-oss replies fast.
-      ...(model.startsWith('openai/gpt-oss') ? { reasoning_effort: 'medium' as const } : {}),
-    },
-    { signal },
-  );
-
-  let content = '';
-  const toolCalls: ChatCompletionMessageToolCall[] = [];
-
-  for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta;
-    if (!delta) continue;
-
-    if (delta.content) {
-      content += delta.content;
-      onText(delta.content);
-    }
-    for (const call of delta.tool_calls ?? []) {
-      const slot = (toolCalls[call.index] ??= { id: '', type: 'function', function: { name: '', arguments: '' } });
-      if (call.id) slot.id = call.id;
-      if (call.function?.name) slot.function.name += call.function.name;
-      if (call.function?.arguments) slot.function.arguments += call.function.arguments;
-    }
-  }
-  return { content, toolCalls: toolCalls.filter(Boolean) };
-}
-
-// Groq rejects a completion with tool_use_failed when the model emits a malformed tool call; one retry usually recovers.
-async function completeWithRetry(...args: Parameters<typeof streamCompletion>) {
-  try {
-    return await streamCompletion(...args);
-  } catch (err) {
-    const code = (err as { error?: { error?: { code?: string } } }).error?.error?.code;
-    if (code !== 'tool_use_failed') throw err;
-    return streamCompletion(...args);
-  }
-}
-
 export async function runAgentTurn(session: Session, userMessage: string, emit: Emit, signal?: AbortSignal) {
   const setStage = (stage: Stage | null) => {
     if (stage && stage !== session.stage) {
@@ -121,7 +65,7 @@ export async function runAgentTurn(session: Session, userMessage: string, emit: 
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const system: ChatCompletionMessageParam = { role: 'system', content: buildSystemPrompt(session.stage, session.collected) };
-    const { content, toolCalls } = await completeWithRetry([system, ...session.history, ...turn], {
+    const { content, toolCalls } = await complete([system, ...session.history, ...turn], {
       allowTools: round < MAX_ROUNDS - 1,
       signal,
       onText: (delta) => emit({ type: 'text', delta }),

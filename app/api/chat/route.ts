@@ -1,4 +1,5 @@
 import Groq from 'groq-sdk';
+import { ModelsUnavailableError } from '@/lib/agent/llm';
 import { runAgentTurn, type AgentEvent } from '@/lib/agent/loop';
 import { deleteSession, getSession } from '@/lib/session';
 
@@ -9,9 +10,13 @@ const MAX_MESSAGE_LENGTH = 2000;
 const SESSION_ID = /^[A-Za-z0-9-]{8,64}$/;
 
 function friendlyError(err: unknown): string {
-  if (err instanceof Groq.APIError) {
-    if (err.status === 429) return 'I am handling a lot of requests right now. Please try again in a few seconds.';
-    if (err.status === 401) return 'The assistant is not configured correctly. Please contact support.';
+  if (err instanceof ModelsUnavailableError) {
+    if (err.daily) return 'The assistant has reached its daily usage limit. Please try again later.';
+    const seconds = Math.max(Math.ceil(err.retryAfterMs / 1000), 5);
+    return `I am handling a lot of requests right now. Please try again in about ${seconds} seconds.`;
+  }
+  if (err instanceof Groq.APIError && err.status === 401) {
+    return 'The assistant is not configured correctly. Please contact support.';
   }
   return 'Sorry, I could not respond just now. Please try again.';
 }

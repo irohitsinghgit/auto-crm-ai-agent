@@ -51,6 +51,7 @@ lib/
     tools.ts           Tool schemas and handlers
     prompt.ts          System prompt
     loop.ts            Stage detection and tool-calling loop
+    llm.ts             Groq streaming with model fallback on rate limits
 data/vehicles.json     XUV700, Thar, Scorpio-N variants, prices and features
 data/dealers.json      Demo dealership directory by city
 scripts/
@@ -90,9 +91,7 @@ Create an API key at https://console.groq.com/keys.
 
 ### 3. Environment
 
-```bash
-cp .env.example .env
-```
+Create a `.env` file in the project root (it is git-ignored) with these variables:
 
 | Variable | Description |
 |---|---|
@@ -101,7 +100,7 @@ cp .env.example .env
 | `ZOHO_ACCOUNTS_URL` | `https://accounts.zoho.in` |
 | `ZOHO_API_DOMAIN` | `https://www.zohoapis.in` |
 | `GROQ_API_KEY` | Groq API key |
-| `GROQ_MODEL` | Optional, defaults to `openai/gpt-oss-120b` |
+| `GROQ_MODELS` | Optional, comma-separated fallback order; defaults to `openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b` |
 
 ### 4. Install, verify, seed and run
 
@@ -191,11 +190,12 @@ These are from test runs against the live CRM; replies are shortened.
 - **Zoho token handling.** The access token is cached in memory and refreshed 5 minutes before expiry; concurrent requests share one refresh; a 401 triggers one refresh and retry. HTTP 204 from search is treated as not found.
 - **Session state.** An in-memory Map keyed by session ID holds history, detected stage, collected details and verified CRM IDs. Sessions expire after 2 hours of inactivity. Only user messages and final replies are kept across turns; facts needed later (customer name, phone, deal, contact and booking IDs) are carried in the system prompt as known details.
 - **Stage detection.** A keyword pass gives the UI an immediate stage; the stage of any tool the model calls then confirms or corrects it.
-- **Errors.** Zoho failures reach the model as `crm_unavailable`. Groq failures reach the user as a friendly message with a Retry button; a failed turn is not saved, so retrying is safe.
+- **Model fallback.** Each Groq model has its own per-minute and per-day token quota. When a model returns 429, it is put on cooldown for the wait Groq reports and the same request continues on the next model in `GROQ_MODELS`. Transient network or 5xx errors and malformed tool calls are retried once on the same model.
+- **Errors.** Zoho failures reach the model as `crm_unavailable`. If every model is rate limited, the user sees either a daily-limit message or a "try again in N seconds" message with a Retry button; a failed turn is not saved, so retrying is safe.
 
 ## Notes and limitations
 
-- **Model.** `llama-3.3-70b-versatile` is no longer available on Groq, so the default is `openai/gpt-oss-120b` with native tool calling. Set `GROQ_MODEL` to use another tool-capable model.
-- **Rate limits.** Groq's free tier allows 8,000 tokens per minute. Several tool-heavy turns in quick succession can hit it; the user sees a retry message. A paid tier removes this.
+- **Model.** `llama-3.3-70b-versatile` is no longer available on Groq, so the primary model is `openai/gpt-oss-120b` with native tool calling, falling back to `openai/gpt-oss-20b` and `qwen/qwen3.8-27b`. Fallback replies may be slightly less capable than the primary model.
+- **Rate limits.** Groq's free tier allows 8,000 tokens per minute and 200,000 tokens per day per model. Fallback extends this across models; a paid tier removes the limits.
 - **Sessions** are held in process memory, so they reset on restart and are not shared across instances. Swap `lib/session.ts` for Redis or a database to scale out.
 - Vehicle prices are indicative ex-showroom figures for demo purposes.
