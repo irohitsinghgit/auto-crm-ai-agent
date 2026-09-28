@@ -13,9 +13,12 @@ export interface ToolContext {
   knownDealIds: Set<string>;
   // Phones searched without a match; only these may be registered as new contacts.
   unmatchedPhones: Set<string>;
+  // Phones that matched a CRM contact in this chat, mapped to that contact's name.
+  matchedPhones: Map<string, string>;
   // Records created in this session, keyed by content, so a repeated tool call cannot create duplicates.
   createdRecords: Map<string, Record<string, unknown>>;
-  remember: (details: Record<string, string | undefined>) => void;
+  // 'customer' for details the customer stated; 'lookups' for records found in the CRM, which may be another person's.
+  remember: (details: Record<string, string | undefined>, source?: 'customer' | 'lookups') => void;
 }
 
 type Args = Record<string, unknown>;
@@ -30,6 +33,7 @@ interface Tool {
 
 const SERVICE_TYPES = ['Periodic Service', 'Repair / Complaint', 'Warranty Claim', 'Accident Repair', 'General Check-up'];
 const PROBLEM_SERVICE_TYPES = new Set(['Repair / Complaint', 'Warranty Claim', 'Accident Repair']);
+const FOLLOW_UP_CHANNELS = ['Phone call', 'WhatsApp', 'SMS', 'Email'];
 
 const ALLOCATION_MEANING: Record<string, string> = {
   'dispatch pending': 'A vehicle is allocated against the booking and is awaiting dispatch from the plant.',
@@ -81,7 +85,7 @@ async function describeDeal(deal: crm.Deal, knownContacts?: crm.Contact[]) {
     vehicle_model: deal.vehicleModel,
     test_drive_time: deal.testDriveTime,
     quotation: deal.amount != null ? rupees.format(deal.amount) : null,
-    follow_up_preference: deal.followUpPreference,
+    currently_saved_follow_up: deal.followUpPreference,
     booking_id: deal.bookingId,
     ...(await dealerForDeal(deal, knownContacts)),
   };
@@ -117,7 +121,8 @@ async function contactsByPhone(phone: string, ctx: ToolContext) {
   const contacts = await crm.findContactsByPhone(phone);
   contacts.forEach((c) => ctx.knownContactIds.add(c.id));
   if (contacts[0]) {
-    ctx.remember({ customer_name: contacts[0].name, phone });
+    ctx.matchedPhones.set(phone, contacts[0].name);
+    ctx.remember({ record_name: contacts[0].name, record_phone: phone }, 'lookups');
   } else {
     ctx.unmatchedPhones.add(phone);
   }
@@ -176,7 +181,8 @@ const tools: Record<string, Tool> = {
           phone: { type: 'string', description: '10-digit Indian mobile number' },
           email: { type: 'string' },
           city: { type: 'string', description: 'Preferred city for test drive and dealership' },
-          vehicle_model: { type: 'string', description: 'Model of interest, optionally with variant, e.g. "XUV700 AX7"' },
+          vehicle_model: { type: 'string', description: 'Model of interest as the customer named it, optionally with variant, e.g. "XUV700 AX7". Resolved automatically; no catalog lookup needed.' },
+          phone_confirmed: { type: 'boolean', description: 'Set true only if the customer explicitly said this number is theirs after being asked.' },
         },
         required: ['first_name', 'last_name', 'phone', 'email', 'city', 'vehicle_model'],
       },
@@ -192,6 +198,18 @@ const tools: Record<string, Tool> = {
       };
       if (!lead.vehicleModel) {
         throw new ValidationError('vehicle_model', `Choose one of: ${MODEL_NAMES.join(', ')}.`);
+      }
+
+      // A number found on another person's CRM record earlier in this chat must not be reused silently.
+      const recordName = ctx.matchedPhones.get(lead.phone);
+      const sameName = recordName?.toLowerCase() === `${lead.firstName} ${lead.lastName}`.toLowerCase();
+      if (recordName && !sameName && args.phone_confirmed !== true) {
+        return {
+          ok: false,
+          error: 'phone_belongs_to_other_record',
+          message: 'This number belongs to a different customer record found earlier in this chat.',
+          next_step: `Ask ${lead.firstName} for their own mobile number. Do not reveal whose record it is. Use this number only if they explicitly confirm it is theirs, then set phone_confirmed to true.`,
+        };
       }
       ctx.remember({
         customer_name: `${lead.firstName} ${lead.lastName}`,
@@ -264,7 +282,7 @@ const tools: Record<string, Tool> = {
       }
 
       deals.forEach((d) => ctx.knownDealIds.add(d.id));
-      ctx.remember({ customer_name: deals[0].contact?.name, deal_id: deals.length === 1 ? deals[0].id : undefined });
+      ctx.remember({ record_name: deals[0].contact?.name, deal_id: deals.length === 1 ? deals[0].id : undefined }, 'lookups');
       return { ok: true, deals: await Promise.all(deals.map((d) => describeDeal(d, contacts))) };
     },
   },
@@ -274,24 +292,32 @@ const tools: Record<string, Tool> = {
     status: 'Updating follow-up preference',
     definition: {
       name: 'update_deal_followup',
-      description: 'Save how and when the customer wants the dealer to follow up (e.g. "WhatsApp, weekday evenings"). The deal must have been found with find_deal first.',
+      description: 'Save how and when the customer wants the dealer to follow up, taken only from what the customer asked for in their latest message. Never reuse the currently saved preference. The deal must have been found with find_deal first.',
       parameters: {
         type: 'object',
         properties: {
           deal_id: { type: 'string', description: 'deal_id returned by find_deal' },
-          preference: { type: 'string', description: 'Preferred channel and time for follow-up' },
+          channel: { type: 'string', enum: FOLLOW_UP_CHANNELS, description: 'Channel the customer asked for' },
+          time_window: { type: 'string', description: 'When the customer asked to be contacted, in their words, e.g. "evening" or "weekdays after 6 pm". Use "any time" if they did not say.' },
         },
-        required: ['deal_id', 'preference'],
+        required: ['deal_id', 'channel', 'time_window'],
       },
     },
     async handler(args, ctx) {
       const dealId = validate.recordId(args.deal_id, 'deal_id');
-      const preference = validate.text(args.preference, 'preference', 100);
+      const channel = validate.text(args.channel, 'channel', 20);
+      if (!FOLLOW_UP_CHANNELS.includes(channel)) {
+        throw new ValidationError('channel', `Choose one of: ${FOLLOW_UP_CHANNELS.join(', ')}.`);
+      }
+      const timeWindow = validate.text(args.time_window, 'time_window', 60);
       if (!ctx.knownDealIds.has(dealId)) {
         return { ok: false, error: 'unverified_deal', message: 'Look up the deal with find_deal before updating it.' };
       }
-      await crm.updateDeal(dealId, { followUpPreference: preference });
-      return { ok: true, status: 'updated', deal_id: dealId, follow_up_preference: preference };
+
+      await crm.updateDeal(dealId, { followUpPreference: `${channel}, ${timeWindow}` });
+      // Read back so the reply reflects what the CRM actually stored.
+      const saved = await crm.getDeal(dealId);
+      return { ok: true, status: 'updated', saved_follow_up_preference: saved?.followUpPreference ?? null };
     },
   },
 
@@ -340,7 +366,7 @@ const tools: Record<string, Tool> = {
       }
 
       booked.forEach((d) => ctx.knownDealIds.add(d.id));
-      ctx.remember({ customer_name: booked[0].contact?.name, booking_id: booked[0].bookingId ?? undefined });
+      ctx.remember({ record_name: booked[0].contact?.name, booking_id: booked[0].bookingId ?? undefined }, 'lookups');
       return { ok: true, bookings: await Promise.all(booked.map((d) => describeBooking(d, contacts))) };
     },
   },
@@ -366,7 +392,7 @@ const tools: Record<string, Tool> = {
           'collect their full name and email (skip any already given), confirm, register them with create_contact, then continue with the service case.',
         );
       }
-      ctx.remember({ contact_id: contacts.length === 1 ? contacts[0].id : undefined });
+      ctx.remember({ contact_id: contacts.length === 1 ? contacts[0].id : undefined }, 'lookups');
       return { ok: true, contacts: contacts.map((c) => ({ contact_id: c.id, name: c.name, email: c.email })) };
     },
   },
@@ -406,7 +432,8 @@ const tools: Record<string, Tool> = {
       const [existing] = await crm.findContactsByPhone(contact.phone);
       const contactId = existing?.id ?? (await crm.createContact(contact));
       ctx.knownContactIds.add(contactId);
-      ctx.remember({ customer_name: `${contact.firstName} ${contact.lastName}`, phone: contact.phone, email: contact.email, contact_id: contactId });
+      ctx.remember({ customer_name: `${contact.firstName} ${contact.lastName}`, phone: contact.phone, email: contact.email });
+      ctx.remember({ contact_id: contactId }, 'lookups');
 
       const result = { status: existing ? 'already_registered' : 'created', contact_id: contactId, name: `${contact.firstName} ${contact.lastName}` };
       ctx.createdRecords.set(key, result);

@@ -9,10 +9,12 @@ export interface Session {
   id: string;
   history: ChatCompletionMessageParam[];
   stage: Stage | null;
-  collected: Record<string, string>;
+  // Details the customer stated, kept apart from records found by lookups, which may belong to someone else.
+  collected: { customer: Record<string, string>; lookups: Record<string, string> };
   knownContactIds: Set<string>;
   knownDealIds: Set<string>;
   unmatchedPhones: Set<string>;
+  matchedPhones: Map<string, string>;
   createdRecords: Map<string, Record<string, unknown>>;
   busy: boolean;
   updatedAt: number;
@@ -42,10 +44,11 @@ export function getSession(id: string): Session {
       id,
       history: [],
       stage: null,
-      collected: {},
+      collected: { customer: {}, lookups: {} },
       knownContactIds: new Set(),
       knownDealIds: new Set(),
       unmatchedPhones: new Set(),
+      matchedPhones: new Map(),
       createdRecords: new Map(),
       busy: false,
       updatedAt: Date.now(),
@@ -65,10 +68,12 @@ export function toolContext(session: Session): ToolContext {
     knownContactIds: session.knownContactIds,
     knownDealIds: session.knownDealIds,
     unmatchedPhones: session.unmatchedPhones,
+    matchedPhones: session.matchedPhones,
     createdRecords: session.createdRecords,
-    remember(details) {
+    remember(details, source = 'customer') {
+      const target = session.collected[source];
       for (const [key, value] of Object.entries(details)) {
-        if (value) session.collected[key] = value;
+        if (value) target[key] = value;
       }
     },
   };
