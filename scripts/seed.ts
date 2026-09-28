@@ -45,7 +45,7 @@ const CONTACTS: SeedContact[] = [
   {
     firstName: 'Vikram',
     lastName: 'Mehta',
-    phone: '9876543210',
+    phone: '9876500003',
     email: 'vikram.mehta@example.com',
     city: 'Pune',
     deal: {
@@ -64,7 +64,7 @@ const CONTACTS: SeedContact[] = [
   {
     firstName: 'Amit',
     lastName: 'Verma',
-    phone: '9876543201',
+    phone: '9876500004',
     email: 'amit@example.com',
     city: 'Mumbai',
   },

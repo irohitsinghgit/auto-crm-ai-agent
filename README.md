@@ -119,8 +119,8 @@ Other scripts: `npm run typecheck`, `npm run build`, `npm start`.
 |---|---|---|
 | Lead: Rajesh Sharma | 9876500001 | Thar, Mumbai |
 | Contact + Deal: Priya Patel | 9876500002 | Mumbai. "Priya Patel - XUV700", Qualification, test drive 30 Sep 2026, 11:00 AM |
-| Contact + Deal: Vikram Mehta | 9876543210 | Pune. "Vikram Mehta - Scorpio-N Z8L", Closed Won, booking MAH-9921, In Transit, VIN MA1TA2NE4P1234567, expected delivery 2026-10-10, balance ₹16,00,000 |
-| Contact: Amit Verma | 9876543201 | Mumbai. Service case demo |
+| Contact + Deal: Vikram Mehta | 9876500003 | Pune. "Vikram Mehta - Scorpio-N Z8L", Closed Won, booking MAH-9921, In Transit, VIN MA1TA2NE4P1234567, expected delivery 2026-10-10, balance ₹16,00,000 |
+| Contact: Amit Verma | 9876500004 | Mumbai. Service case demo |
 
 The seed fills in empty fields on existing demo records (for example the booking details or a contact's Mailing City) but never overwrites values that are already set.
 
@@ -150,7 +150,7 @@ These are from test runs against the live CRM; replies are shortened.
 
 > **User:** When will my Scorpio-N be delivered? Booking ID is MAH-12
 > **Agent:** That booking ID doesn't match our format (MAH- followed by 4 to 6 digits, e.g. MAH-9921). Could you share the correct ID or your registered mobile number?
-> **User:** My phone is 9876543210. Has the VIN been allocated and how much balance do I need to pay?
+> **User:** My phone is 9876500003. Has the VIN been allocated and how much balance do I need to pay?
 > **Agent:** *(Checking booking status)* Your booking MAH-9921 for the Scorpio-N Z8L is In Transit: the vehicle has left the plant and is on its way to the dealership. The VIN assigned is MA1TA2NE4P1234567, and the balance remaining is ₹16,00,000.
 > Payment link: https://pay.example.com/booking/MAH-9921
 > Dealer contact: Drive Assist Partner Dealership, Wakad, +91 20 4000 1200.
@@ -161,7 +161,7 @@ These are from test runs against the live CRM; replies are shortened.
 
 > **User:** What's the ground clearance of the Thar?
 > **Agent:** The Thar offers 226 mm of ground clearance. Would you like to schedule a test drive?
-> **User:** Actually I already own a Thar and the clutch is giving trouble. My number is 9876543201
+> **User:** Actually I already own a Thar and the clutch is giving trouble. My number is 9876500004
 > **Agent:** *(Looking up customer)* Could you share your registration number and current odometer reading?
 > **User:** Registration is MH 12 KT 4521 and it has done 18,400 km
 > **Agent:** Which service center would you prefer?

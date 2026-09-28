@@ -31,7 +31,7 @@ const SUGGESTIONS = [
   'What variants does the XUV700 come in?',
   'Is my test drive confirmed? My number is 9876500002',
   'Where is my booking MAH-9921?',
-  'Book a service for my car, my number is 9876543201',
+  'Book a service for my car, my number is 9876500004',
 ];
 
 const newId = () => crypto.randomUUID();
