@@ -1,0 +1,127 @@
+{
+  "priceNote": "Indicative ex-showroom prices (Delhi). On-road price varies by city, RTO charges, insurance and accessories.",
+  "models": [
+    {
+      "model": "XUV700",
+      "aliases": ["xuv 700", "xuv7oo", "xuv"],
+      "bodyType": "Premium 5/7-seater SUV",
+      "engines": [
+        "2.0L mStallion turbo-petrol, 200 PS / 380 Nm",
+        "2.2L mHawk diesel, 155 PS / 360 Nm (MX) and 185 PS / 450 Nm (AX variants)"
+      ],
+      "transmissions": ["6-speed MT", "6-speed AT"],
+      "drivetrain": "FWD, with AWD on select AX7 and AX7 L diesel AT variants",
+      "safety": "5-star Global NCAP rating, up to 7 airbags, Level 2 ADAS on AX7 and AX7 L",
+      "variants": [
+        {
+          "name": "MX",
+          "priceRange": [1399000, 1499000],
+          "seating": "5",
+          "highlights": ["20.32 cm touchscreen with Android Auto and Apple CarPlay", "Dual front airbags, ESP", "LED tail lamps"]
+        },
+        {
+          "name": "AX3",
+          "priceRange": [1639000, 1899000],
+          "seating": "5 / 7",
+          "highlights": ["Dual 26.03 cm HD screens with AdrenoX", "Built-in Alexa", "Digital instrument cluster", "Rear AC vents"]
+        },
+        {
+          "name": "AX5",
+          "priceRange": [1769000, 2029000],
+          "seating": "5 / 7",
+          "highlights": ["Skyroof", "LED projector headlamps with DRLs", "Dual-zone climate control", "18-inch alloy wheels"]
+        },
+        {
+          "name": "AX7",
+          "priceRange": [1949000, 2369000],
+          "seating": "6 / 7",
+          "highlights": ["Level 2 ADAS", "Panoramic skyroof", "Wireless charging", "7 airbags", "AWD option on diesel AT"]
+        },
+        {
+          "name": "AX7 L",
+          "priceRange": [2299000, 2574000],
+          "seating": "6 / 7",
+          "highlights": ["Sony 3D sound with 12 speakers", "360-degree camera", "Electronic parking brake", "Ventilated front seats", "Adaptive cruise control with Stop & Go"]
+        }
+      ]
+    },
+    {
+      "model": "Thar",
+      "aliases": ["thar 3 door", "thar 3-door"],
+      "bodyType": "3-door lifestyle off-roader, 4-seater",
+      "engines": [
+        "1.5L D117 CRDe diesel, 119 PS / 300 Nm (RWD)",
+        "2.2L mHawk diesel, 132 PS / 300 Nm",
+        "2.0L mStallion turbo-petrol, 152 PS / 320 Nm (MT), 300 Nm (AT)"
+      ],
+      "transmissions": ["6-speed MT", "6-speed AT"],
+      "drivetrain": "RWD, or 4WD with shift-on-the-fly transfer case and low-range gearbox",
+      "safety": "Dual front airbags, ESP with rollover mitigation, hill hold and hill descent control",
+      "offRoad": "226 mm ground clearance, 650 mm water wading, 41.2 / 36.8 / 27 degree approach / departure / breakover angles",
+      "variants": [
+        {
+          "name": "AX (O)",
+          "priceRange": [1150000, 1400000],
+          "seating": "4",
+          "highlights": ["Hard top", "17.8 cm touchscreen", "Steel wheels", "RWD or 4WD"]
+        },
+        {
+          "name": "LX",
+          "priceRange": [1300000, 1760000],
+          "seating": "4",
+          "highlights": ["Hard top or convertible soft top", "18-inch alloy wheels", "Cruise control", "Mechanical locking differential on 4WD diesel", "Automatic option"]
+        }
+      ]
+    },
+    {
+      "model": "Scorpio-N",
+      "aliases": ["scorpio n", "scorpion", "scorpio", "scorpion n"],
+      "bodyType": "Body-on-frame 6/7-seater SUV",
+      "engines": [
+        "2.0L mStallion turbo-petrol, 203 PS / 370-380 Nm",
+        "2.2L mHawk diesel, 132 PS / 300 Nm (Z2, Z4) and 175 PS / 370-400 Nm (Z6 onwards)"
+      ],
+      "transmissions": ["6-speed MT", "6-speed AT"],
+      "drivetrain": "RWD, or 4XPLOR 4WD with terrain modes on select diesel variants",
+      "safety": "5-star Global NCAP rating, up to 6 airbags, ESP, hill hold and hill descent control",
+      "variants": [
+        {
+          "name": "Z2",
+          "priceRange": [1399000, 1549000],
+          "seating": "7",
+          "highlights": ["Dual front airbags", "LED tail lamps", "Steel wheels"]
+        },
+        {
+          "name": "Z4",
+          "priceRange": [1564000, 1854000],
+          "seating": "7",
+          "highlights": ["20.32 cm touchscreen", "Android Auto and Apple CarPlay", "Steering-mounted controls", "4XPLOR 4WD option on diesel"]
+        },
+        {
+          "name": "Z6",
+          "priceRange": [1689000, 1839000],
+          "seating": "7",
+          "highlights": ["AdrenoX connected tech", "Built-in Alexa", "Cruise control", "Rear parking camera"]
+        },
+        {
+          "name": "Z8 Select",
+          "priceRange": [1799000, 1969000],
+          "seating": "7",
+          "highlights": ["Electric sunroof", "Dual-tone interior", "LED projector headlamps", "18-inch alloy wheels"]
+        },
+        {
+          "name": "Z8",
+          "priceRange": [1839000, 2319000],
+          "seating": "7",
+          "highlights": ["Electric sunroof", "Dual-zone climate control", "6 airbags", "4XPLOR 4WD option on diesel"]
+        },
+        {
+          "name": "Z8 L",
+          "priceRange": [2029000, 2489000],
+          "seating": "6 / 7",
+          "highlights": ["Sony 3D sound with 12 speakers", "Ventilated front seats", "Wireless charging", "Captain seats option", "4XPLOR 4WD option on diesel"]
+        }
+      ]
+    }
+  ]
+}
