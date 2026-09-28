@@ -18,6 +18,8 @@ export interface ToolContext {
   // Create requests awaiting customer approval, mapped to the turn the summary was produced in.
   pendingConfirmations: Map<string, number>;
   turn: number;
+  // The previous assistant reply when the customer's current message approves it, otherwise null.
+  approvedReply: string | null;
   // Records created in this session, keyed by content, so a repeated tool call cannot create duplicates.
   createdRecords: Map<string, Record<string, unknown>>;
   // 'customer' for details the customer stated; 'lookups' for records found in the CRM, which may be another person's.
@@ -143,6 +145,16 @@ const CONFIRMED_PARAM = {
   description: 'Set true only on the call after the customer replied yes to the summary returned as confirmation_required.',
 } as const;
 
+const normalizeForMatch = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// True when the reply the customer just approved displayed every value being saved, e.g. a summary the
+// model wrote itself. Paraphrased or partial summaries do not count and fall back to a tool summary.
+function summaryShownIn(reply: string | null, summary: Record<string, unknown>): boolean {
+  if (!reply) return false;
+  const shown = normalizeForMatch(reply);
+  return Object.values(summary).every((value) => shown.includes(normalizeForMatch(String(value))));
+}
+
 // A create runs only after the customer approves its summary in a later message than the one that produced it,
 // so the model cannot confirm on the customer's behalf. Any change to the details needs a fresh confirmation.
 function confirmationGate(ctx: ToolContext, key: string, confirmed: unknown, summary: Record<string, unknown>): ToolResult | null {
@@ -155,7 +167,8 @@ function confirmationGate(ctx: ToolContext, key: string, confirmed: unknown, sum
   };
 
   const askedInTurn = ctx.pendingConfirmations.get(key);
-  if (confirmed === true && askedInTurn !== undefined && askedInTurn < ctx.turn) {
+  const approvedEarlierSummary = confirmed === true && askedInTurn !== undefined && askedInTurn < ctx.turn;
+  if (approvedEarlierSummary || summaryShownIn(ctx.approvedReply, summary)) {
     clearRecord();
     return null;
   }

@@ -134,6 +134,10 @@ export default function ChatPage() {
               breakBeforeText = true;
               updateMessage(assistantId, (m) => ({ ...m, tools: [...m.tools, { id: event.id, status: event.status, state: 'running' }] }));
               break;
+            case 'reset':
+              breakBeforeText = false;
+              updateMessage(assistantId, (m) => ({ ...m, text: '' }));
+              break;
             case 'tool_end':
               updateMessage(assistantId, (m) => ({
                 ...m,

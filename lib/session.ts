@@ -16,6 +16,9 @@ export interface Session {
   unmatchedPhones: Set<string>;
   matchedPhones: Map<string, string>;
   pendingConfirmations: Map<string, number>;
+  // The create call whose summary was just shown; the server runs it itself if the next message approves it.
+  pendingAction: { tool: string; args: Record<string, unknown>; turn: number } | null;
+  // Number of completed turns; a failed turn does not count.
   turn: number;
   createdRecords: Map<string, Record<string, unknown>>;
   busy: boolean;
@@ -52,6 +55,7 @@ export function getSession(id: string): Session {
       unmatchedPhones: new Set(),
       matchedPhones: new Map(),
       pendingConfirmations: new Map(),
+      pendingAction: null,
       turn: 0,
       createdRecords: new Map(),
       busy: false,
@@ -79,14 +83,20 @@ export function hasTestDriveEnquiry(session: Session): boolean {
   return [...session.createdRecords.keys()].some((key) => key.startsWith('lead:'));
 }
 
-export function toolContext(session: Session): ToolContext {
+export function lastAssistantReply(session: Session): string | null {
+  const last = [...session.history].reverse().find((m) => m.role === 'assistant');
+  return typeof last?.content === 'string' ? last.content : null;
+}
+
+export function toolContext(session: Session, current: { turn: number; approvedReply: string | null }): ToolContext {
   return {
     knownContactIds: session.knownContactIds,
     knownDealIds: session.knownDealIds,
     unmatchedPhones: session.unmatchedPhones,
     matchedPhones: session.matchedPhones,
     pendingConfirmations: session.pendingConfirmations,
-    turn: session.turn,
+    turn: current.turn,
+    approvedReply: current.approvedReply,
     createdRecords: session.createdRecords,
     remember(details, source = 'customer') {
       const target = session.collected[source];

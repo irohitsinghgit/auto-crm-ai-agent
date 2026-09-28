@@ -127,7 +127,7 @@ export async function complete(messages: ChatCompletionMessageParam[], options: 
     }
 
     try {
-      return await streamWithRetry(model, messages, options);
+      return { ...(await streamWithRetry(model, messages, options)), model };
     } catch (err) {
       if (!(err instanceof Groq.APIError) || err.status !== 429) throw err;
       const waitMs = retryAfterMs(err);
