@@ -137,7 +137,9 @@ export default function ChatPage() {
             case 'tool_end':
               updateMessage(assistantId, (m) => ({
                 ...m,
-                tools: m.tools.map((t) => (t.id === event.id ? { ...t, state: event.ok ? 'done' : 'failed' } : t)),
+                tools: m.tools.map((t) =>
+                  t.id === event.id ? { ...t, status: event.status ?? t.status, state: event.ok ? 'done' : 'failed' } : t,
+                ),
               }));
               break;
             case 'error':

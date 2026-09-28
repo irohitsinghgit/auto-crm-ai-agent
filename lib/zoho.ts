@@ -42,11 +42,16 @@ async function requestAccessToken(): Promise<string> {
     refresh_token: env('ZOHO_REFRESH_TOKEN'),
   });
 
-  const res = await fetch(`${env('ZOHO_ACCOUNTS_URL', 'https://accounts.zoho.in')}/oauth/v2/token`, {
-    method: 'POST',
-    body,
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${env('ZOHO_ACCOUNTS_URL', 'https://accounts.zoho.in')}/oauth/v2/token`, {
+      method: 'POST',
+      body,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new ZohoError(`Could not reach Zoho accounts: ${(err as Error).message}`, { code: 'NETWORK_ERROR' });
+  }
   const data = await res.json().catch(() => ({}));
 
   // An invalid refresh token still comes back as HTTP 200 with an "error" field.

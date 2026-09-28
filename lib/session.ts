@@ -15,6 +15,8 @@ export interface Session {
   knownDealIds: Set<string>;
   unmatchedPhones: Set<string>;
   matchedPhones: Map<string, string>;
+  pendingConfirmations: Map<string, number>;
+  turn: number;
   createdRecords: Map<string, Record<string, unknown>>;
   busy: boolean;
   updatedAt: number;
@@ -49,6 +51,8 @@ export function getSession(id: string): Session {
       knownDealIds: new Set(),
       unmatchedPhones: new Set(),
       matchedPhones: new Map(),
+      pendingConfirmations: new Map(),
+      turn: 0,
       createdRecords: new Map(),
       busy: false,
       updatedAt: Date.now(),
@@ -63,6 +67,14 @@ export function deleteSession(id: string) {
   sessions.delete(id);
 }
 
+const CONFIRMATION_TOOLS: Record<string, string> = { lead: 'create_lead', contact: 'create_contact', case: 'create_service_case' };
+
+// Tools whose summary has been shown and is waiting for the customer's yes.
+export function awaitingConfirmation(session: Session): string[] {
+  const tools = [...session.pendingConfirmations.keys()].map((key) => CONFIRMATION_TOOLS[key.split(':')[0]]);
+  return [...new Set(tools)];
+}
+
 export function hasTestDriveEnquiry(session: Session): boolean {
   return [...session.createdRecords.keys()].some((key) => key.startsWith('lead:'));
 }
@@ -73,6 +85,8 @@ export function toolContext(session: Session): ToolContext {
     knownDealIds: session.knownDealIds,
     unmatchedPhones: session.unmatchedPhones,
     matchedPhones: session.matchedPhones,
+    pendingConfirmations: session.pendingConfirmations,
+    turn: session.turn,
     createdRecords: session.createdRecords,
     remember(details, source = 'customer') {
       const target = session.collected[source];

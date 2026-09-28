@@ -140,6 +140,13 @@ export async function createLead(input: {
   return createdId(res);
 }
 
+export async function addNote(module: 'Leads' | 'Contacts' | 'Deals', recordId: string, title: string, content: string): Promise<string> {
+  const res = await zoho.post<WriteResponse>(`/${module}/${recordId}/Notes`, {
+    data: [{ Note_Title: title, Note_Content: content }],
+  });
+  return createdId(res);
+}
+
 export async function findContactsByPhone(phone: string): Promise<Contact[]> {
   const res = await zoho.get<ListResponse>('/Contacts/search', { phone, fields: CONTACT_FIELDS });
   return (res?.data ?? []).map(toContact);

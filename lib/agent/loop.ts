@@ -2,7 +2,7 @@ import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/complet
 import { complete } from './llm';
 import { buildSystemPrompt, testDrivePitch } from './prompt';
 import { executeTool, toolStage, toolStatus, type Stage } from './tools';
-import { appendHistory, hasTestDriveEnquiry, toolContext, type Session } from '../session';
+import { appendHistory, awaitingConfirmation, hasTestDriveEnquiry, toolContext, type Session } from '../session';
 
 const TEST_DRIVE_MENTION = /test[\s-]?drive/i;
 
@@ -11,7 +11,7 @@ const MAX_ROUNDS = 5;
 export type AgentEvent =
   | { type: 'stage'; stage: Stage }
   | { type: 'tool_start'; id: string; name: string; status: string }
-  | { type: 'tool_end'; id: string; name: string; ok: boolean }
+  | { type: 'tool_end'; id: string; name: string; ok: boolean; status?: string }
   | { type: 'text'; delta: string }
   | { type: 'done' }
   | { type: 'error'; message: string };
@@ -62,6 +62,7 @@ export async function runAgentTurn(session: Session, userMessage: string, emit: 
   };
   setStage(detectStage(userMessage, session.stage));
 
+  session.turn++;
   const ctx = toolContext(session);
   const turn: ChatCompletionMessageParam[] = [{ role: 'user', content: userMessage }];
   let answeredVehicleQuestion = false;
@@ -71,6 +72,7 @@ export async function runAgentTurn(session: Session, userMessage: string, emit: 
       stage: session.stage,
       collected: session.collected,
       testDriveRegistered: hasTestDriveEnquiry(session),
+      awaitingConfirmation: awaitingConfirmation(session),
     });
     const { content, toolCalls } = await complete([{ role: 'system', content: prompt }, ...session.history, ...turn], {
       allowTools: round < MAX_ROUNDS - 1,
@@ -83,7 +85,8 @@ export async function runAgentTurn(session: Session, userMessage: string, emit: 
       if (!content.trim()) emit({ type: 'text', delta: reply });
 
       // Backstop for the prompt's test drive rule: a vehicle answer always ends with the pitch.
-      if (answeredVehicleQuestion && !hasTestDriveEnquiry(session) && !TEST_DRIVE_MENTION.test(reply)) {
+      const testDriveDiscussed = TEST_DRIVE_MENTION.test(reply) || TEST_DRIVE_MENTION.test(userMessage);
+      if (answeredVehicleQuestion && !hasTestDriveEnquiry(session) && !testDriveDiscussed) {
         const pitch = `\n\n${testDrivePitch(session.collected.customer)}`;
         emit({ type: 'text', delta: pitch });
         reply += pitch;
@@ -98,7 +101,12 @@ export async function runAgentTurn(session: Session, userMessage: string, emit: 
       setStage(toolStage(name));
       emit({ type: 'tool_start', id: call.id, name, status: toolStatus(name) });
       const result = await executeTool(name, call.function.arguments, ctx);
-      emit({ type: 'tool_end', id: call.id, name, ok: result.ok === true });
+      // A pending confirmation is an expected step, not a failure, so the badge says so.
+      if (result.error === 'confirmation_required') {
+        emit({ type: 'tool_end', id: call.id, name, ok: true, status: 'Details ready to confirm' });
+      } else {
+        emit({ type: 'tool_end', id: call.id, name, ok: result.ok === true });
+      }
       if (name === 'get_vehicle_info' && result.ok) answeredVehicleQuestion = true;
       turn.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
     }

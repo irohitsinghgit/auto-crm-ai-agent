@@ -15,6 +15,9 @@ export interface ToolContext {
   unmatchedPhones: Set<string>;
   // Phones that matched a CRM contact in this chat, mapped to that contact's name.
   matchedPhones: Map<string, string>;
+  // Create requests awaiting customer approval, mapped to the turn the summary was produced in.
+  pendingConfirmations: Map<string, number>;
+  turn: number;
   // Records created in this session, keyed by content, so a repeated tool call cannot create duplicates.
   createdRecords: Map<string, Record<string, unknown>>;
   // 'customer' for details the customer stated; 'lookups' for records found in the CRM, which may be another person's.
@@ -135,6 +138,37 @@ async function dealsByPhone(phone: string, ctx: ToolContext) {
   return { contacts, deals, repeatMiss };
 }
 
+const CONFIRMED_PARAM = {
+  type: 'boolean',
+  description: 'Set true only on the call after the customer replied yes to the summary returned as confirmation_required.',
+} as const;
+
+// A create runs only after the customer approves its summary in a later message than the one that produced it,
+// so the model cannot confirm on the customer's behalf. Any change to the details needs a fresh confirmation.
+function confirmationGate(ctx: ToolContext, key: string, confirmed: unknown, summary: Record<string, unknown>): ToolResult | null {
+  // Keys look like "lead:<phone>:<details>"; only the latest summary for a record can be approved.
+  const recordPrefix = `${key.split(':').slice(0, 2).join(':')}:`;
+  const clearRecord = () => {
+    for (const pending of [...ctx.pendingConfirmations.keys()]) {
+      if (pending.startsWith(recordPrefix)) ctx.pendingConfirmations.delete(pending);
+    }
+  };
+
+  const askedInTurn = ctx.pendingConfirmations.get(key);
+  if (confirmed === true && askedInTurn !== undefined && askedInTurn < ctx.turn) {
+    clearRecord();
+    return null;
+  }
+  clearRecord();
+  ctx.pendingConfirmations.set(key, ctx.turn);
+  return {
+    ok: false,
+    error: 'confirmation_required',
+    summary,
+    next_step: 'Nothing was saved yet. Show this summary to the customer and ask them to confirm. After they reply yes, call this tool again with the same details and customer_confirmed set to true.',
+  };
+}
+
 function requireOne(args: Args, fields: string[]) {
   if (fields.every((f) => args[f] === undefined || args[f] === null || args[f] === '')) {
     throw new ValidationError(fields.join('|'), `Provide either ${fields.join(' or ')}.`);
@@ -172,7 +206,7 @@ const tools: Record<string, Tool> = {
     status: 'Creating lead',
     definition: {
       name: 'create_lead',
-      description: 'Register a new sales lead for a test drive or purchase enquiry. Call only after the customer has confirmed all details.',
+      description: 'Register a test drive or purchase enquiry. If the phone already has an enquiry, the request is noted on it instead. Call as soon as all details are collected; the first call returns a summary for the customer to confirm.',
       parameters: {
         type: 'object',
         properties: {
@@ -183,6 +217,7 @@ const tools: Record<string, Tool> = {
           city: { type: 'string', description: 'Preferred city for test drive and dealership' },
           vehicle_model: { type: 'string', description: 'Model of interest as the customer named it, optionally with variant, e.g. "XUV700 AX7". Resolved automatically; no catalog lookup needed.' },
           phone_confirmed: { type: 'boolean', description: 'Set true only if the customer explicitly said this number is theirs after being asked.' },
+          customer_confirmed: CONFIRMED_PARAM,
         },
         required: ['first_name', 'last_name', 'phone', 'email', 'city', 'vehicle_model'],
       },
@@ -223,12 +258,29 @@ const tools: Record<string, Tool> = {
       const created = ctx.createdRecords.get(key);
       if (created) return { ok: true, already_created_in_this_chat: true, ...created };
 
+      const gate = confirmationGate(ctx, `${key}:${JSON.stringify(lead)}`, args.customer_confirmed, {
+        name: `${lead.firstName} ${lead.lastName}`,
+        phone: lead.phone,
+        email: lead.email,
+        city: lead.city,
+        vehicle_model: lead.vehicleModel,
+      });
+      if (gate) return gate;
+
       const [existing] = await crm.findLeadsByPhone(lead.phone);
       if (existing) {
+        // Record the new request on the existing lead instead of creating a duplicate.
+        await crm.addNote(
+          'Leads',
+          existing.id,
+          'Test drive request via chat',
+          `Test drive requested for ${lead.vehicleModel} in ${lead.city}. Name given: ${lead.firstName} ${lead.lastName}, email: ${lead.email}.`,
+        );
         const result = {
-          status: 'already_registered',
-          message: 'An enquiry with this phone number already exists; the sales team will use it.',
-          lead: { name: existing.name, vehicle_model: existing.vehicleModel, city: existing.city },
+          status: 'existing_lead_request_noted',
+          customer_message: `We already have your details, and I've noted your test drive request for the ${lead.vehicleModel} in ${lead.city}.`,
+          reply_guidance: 'Start the reply with customer_message. Do not say a new enquiry was registered.',
+          ...dealerInfo(lead.city),
         };
         ctx.createdRecords.set(key, result);
         return { ok: true, ...result };
@@ -403,7 +455,7 @@ const tools: Record<string, Tool> = {
     status: 'Registering customer',
     definition: {
       name: 'create_contact',
-      description: 'Register a vehicle owner who is not in the CRM so a service case can be logged. Use only after find_contact found no match for a rechecked number, and after the customer confirms their details.',
+      description: 'Register a vehicle owner who is not in the CRM so a service case can be logged. Use only after find_contact found no match for a rechecked number; the first call returns a summary for the customer to confirm.',
       parameters: {
         type: 'object',
         properties: {
@@ -411,6 +463,7 @@ const tools: Record<string, Tool> = {
           last_name: { type: 'string' },
           phone: { type: 'string', description: 'The 10-digit mobile number that find_contact did not match' },
           email: { type: 'string' },
+          customer_confirmed: CONFIRMED_PARAM,
         },
         required: ['first_name', 'last_name', 'phone', 'email'],
       },
@@ -430,6 +483,13 @@ const tools: Record<string, Tool> = {
       const created = ctx.createdRecords.get(key);
       if (created) return { ok: true, already_created_in_this_chat: true, ...created };
 
+      const gate = confirmationGate(ctx, `${key}:${JSON.stringify(contact)}`, args.customer_confirmed, {
+        name: `${contact.firstName} ${contact.lastName}`,
+        phone: contact.phone,
+        email: contact.email,
+      });
+      if (gate) return gate;
+
       const [existing] = await crm.findContactsByPhone(contact.phone);
       const contactId = existing?.id ?? (await crm.createContact(contact));
       ctx.knownContactIds.add(contactId);
@@ -447,7 +507,7 @@ const tools: Record<string, Tool> = {
     status: 'Creating service request',
     definition: {
       name: 'create_service_case',
-      description: 'Log a service booking or complaint for an owner. Call only with a contact from find_contact or create_contact, and after the customer has confirmed the details.',
+      description: 'Log a service booking or complaint for an owner. Call only with a contact from find_contact or create_contact; the first call returns a summary for the customer to confirm.',
       parameters: {
         type: 'object',
         properties: {
@@ -457,6 +517,7 @@ const tools: Record<string, Tool> = {
           issue: { type: 'string', description: 'Customer\'s description of the issue or work needed' },
           service_type: { type: 'string', enum: SERVICE_TYPES },
           service_center: { type: 'string', description: 'Preferred service center or area' },
+          customer_confirmed: CONFIRMED_PARAM,
         },
         required: ['contact_id', 'registration_no', 'odometer', 'issue', 'service_type', 'service_center'],
       },
@@ -479,6 +540,15 @@ const tools: Record<string, Tool> = {
       const key = `case:${contactId}:${registrationNo}:${serviceType}`;
       const created = ctx.createdRecords.get(key);
       if (created) return { ok: true, already_created_in_this_chat: true, ...created };
+
+      const gate = confirmationGate(ctx, `${key}:${odometerKm}:${issue}:${serviceCenter}`, args.customer_confirmed, {
+        registration_no: registrationNo,
+        odometer: `${odometerKm} km`,
+        issue,
+        service_type: serviceType,
+        service_center: serviceCenter,
+      });
+      if (gate) return gate;
 
       const serviceCase = await crm.createServiceCase({
         contactId,
