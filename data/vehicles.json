@@ -12,6 +12,14 @@
       "transmissions": ["6-speed MT", "6-speed AT"],
       "drivetrain": "FWD, with AWD on select AX7 and AX7 L diesel AT variants",
       "safety": "5-star Global NCAP rating, up to 7 airbags, Level 2 ADAS on AX7 and AX7 L",
+      "adas": [
+        "Adaptive cruise control",
+        "Autonomous emergency braking",
+        "Forward collision warning",
+        "Lane keep assist and lane departure warning",
+        "Traffic sign recognition",
+        "Smart pilot assist"
+      ],
       "variants": [
         {
           "name": "MX",

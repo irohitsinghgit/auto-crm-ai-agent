@@ -57,6 +57,7 @@ export function getVehicleInfo(modelInput: string, variantInput?: string) {
     transmissions: model.transmissions,
     drivetrain: model.drivetrain,
     safety: model.safety,
+    ...('adas' in model ? { adas: model.adas } : {}),
     ...('offRoad' in model ? { offRoad: model.offRoad } : {}),
     priceNote: catalog.priceNote,
   };

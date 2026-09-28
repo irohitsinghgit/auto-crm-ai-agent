@@ -165,8 +165,8 @@ const tools: Record<string, Tool> = {
         };
       }
 
-      const leadId = await crm.createLead({ ...lead, description: 'Test drive enquiry from the website chat assistant.' });
-      const result = { status: 'created', lead_id: leadId, vehicle_model: lead.vehicleModel, city: lead.city };
+      await crm.createLead({ ...lead, description: 'Test drive enquiry from the website chat assistant.' });
+      const result = { status: 'created', vehicle_model: lead.vehicleModel, city: lead.city };
       ctx.createdRecords.set(key, result);
       return { ok: true, ...result };
     },
