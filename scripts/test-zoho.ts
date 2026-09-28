@@ -3,7 +3,10 @@ import * as crm from '../lib/crm';
 
 const REQUIRED_FIELDS: Record<string, string[]> = {
   Leads: ['Vehicle_Model', 'Preferred_City'],
-  Deals: ['Vehicle_Model', 'Booking_ID', 'Allocation_Status', 'Test_Drive_Time', 'Follow_Up_Preference', 'Contact_Name'],
+  Deals: [
+    'Vehicle_Model', 'Booking_ID', 'Allocation_Status', 'Test_Drive_Time', 'Follow_Up_Preference', 'Contact_Name',
+    'VIN', 'Expected_Delivery', 'Balance_Amount',
+  ],
   Cases: ['Registration_No', 'Odometer', 'Service_Center', 'Related_To'],
 };
 

@@ -4,6 +4,7 @@ import * as validate from '../validation';
 import { ValidationError } from '../validation';
 import { ZohoError } from '../zoho';
 import { getVehicleInfo, vehicleLabel, MODEL_NAMES } from '../catalog';
+import { findDealer } from '../dealers';
 
 export type Stage = 'new_lead' | 'pipeline' | 'booked' | 'service';
 
@@ -37,7 +38,13 @@ const ALLOCATION_MEANING: Record<string, string> = {
   delivered: 'The vehicle has been delivered to the customer.',
 };
 
+const PAYMENT_LINK_BASE = 'https://pay.example.com/booking/';
+
 const rupees = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+
+// Zoho dates are plain YYYY-MM-DD; format them as calendar dates in IST.
+const formatDate = (isoDate: string) =>
+  new Date(`${isoDate}T00:00:00+05:30`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
 
 const notFound = (message: string, nextStep: string): ToolResult => ({ ok: false, error: 'not_found', message, next_step: nextStep });
 
@@ -51,7 +58,21 @@ function phoneNotFound(repeatMiss: boolean, fallback: string): ToolResult {
   );
 }
 
-function describeDeal(deal: crm.Deal) {
+// Dealer details come from the dealership directory by the customer's city, never from CRM record owners.
+function dealerInfo(city: string | null | undefined) {
+  const dealer = findDealer(city);
+  return dealer
+    ? { dealer_contact: dealer }
+    : { dealer_contact: null, dealer_note: 'No dealership is mapped for this customer; say the dealership will reach out to them directly.' };
+}
+
+async function dealerForDeal(deal: crm.Deal, knownContacts: crm.Contact[] = []) {
+  if (!deal.contact) return dealerInfo(null);
+  const contact = knownContacts.find((c) => c.id === deal.contact!.id) ?? (await crm.getContact(deal.contact.id));
+  return dealerInfo(contact?.city);
+}
+
+async function describeDeal(deal: crm.Deal, knownContacts?: crm.Contact[]) {
   return {
     deal_id: deal.id,
     deal_name: deal.name,
@@ -61,23 +82,33 @@ function describeDeal(deal: crm.Deal) {
     test_drive_time: deal.testDriveTime,
     quotation: deal.amount != null ? rupees.format(deal.amount) : null,
     follow_up_preference: deal.followUpPreference,
-    dealer_contact: deal.owner,
     booking_id: deal.bookingId,
+    ...(await dealerForDeal(deal, knownContacts)),
   };
 }
 
-function describeBooking(deal: crm.Deal) {
+async function describeBooking(deal: crm.Deal, knownContacts?: crm.Contact[]) {
   const status = deal.allocationStatus;
+  const balance = deal.balanceAmount;
+  const details = {
+    vin: deal.vin,
+    expected_delivery: deal.expectedDelivery ? formatDate(deal.expectedDelivery) : null,
+    balance_due: balance != null ? rupees.format(balance) : null,
+  };
+  const notRecorded = Object.entries(details).filter(([, value]) => value == null).map(([key]) => key);
+
   return {
     booking_id: deal.bookingId,
     customer_name: deal.contact?.name ?? null,
     vehicle_model: deal.vehicleModel,
     booking_value: deal.amount != null ? rupees.format(deal.amount) : null,
-    booked_on: deal.closingDate,
+    booked_on: deal.closingDate ? formatDate(deal.closingDate) : null,
     allocation_status: status,
     allocation_status_meaning: status ? ALLOCATION_MEANING[status.toLowerCase()] ?? null : null,
-    dealer_contact: deal.owner,
-    not_in_crm: 'VIN, expected delivery date and balance payment amount are not recorded in the CRM; the dealer shares these directly.',
+    ...details,
+    ...(balance && balance > 0 && deal.bookingId ? { payment_link: `${PAYMENT_LINK_BASE}${encodeURIComponent(deal.bookingId)}` } : {}),
+    ...(notRecorded.length ? { not_yet_recorded: notRecorded } : {}),
+    ...(await dealerForDeal(deal, knownContacts)),
   };
 }
 
@@ -185,7 +216,7 @@ const tools: Record<string, Tool> = {
       }
 
       await crm.createLead({ ...lead, description: 'Test drive enquiry from the website chat assistant.' });
-      const result = { status: 'created', vehicle_model: lead.vehicleModel, city: lead.city };
+      const result = { status: 'created', vehicle_model: lead.vehicleModel, city: lead.city, ...dealerInfo(lead.city) };
       ctx.createdRecords.set(key, result);
       return { ok: true, ...result };
     },
@@ -208,6 +239,7 @@ const tools: Record<string, Tool> = {
     async handler(args, ctx) {
       requireOne(args, ['phone', 'deal_id']);
       let deals: crm.Deal[];
+      let contacts: crm.Contact[] = [];
 
       if (args.deal_id) {
         const deal = await crm.getDeal(validate.recordId(args.deal_id, 'deal_id'));
@@ -228,11 +260,12 @@ const tools: Record<string, Tool> = {
           );
         }
         deals = result.deals;
+        contacts = result.contacts;
       }
 
       deals.forEach((d) => ctx.knownDealIds.add(d.id));
       ctx.remember({ customer_name: deals[0].contact?.name, deal_id: deals.length === 1 ? deals[0].id : undefined });
-      return { ok: true, deals: deals.map(describeDeal) };
+      return { ok: true, deals: await Promise.all(deals.map((d) => describeDeal(d, contacts))) };
     },
   },
 
@@ -257,7 +290,7 @@ const tools: Record<string, Tool> = {
       if (!ctx.knownDealIds.has(dealId)) {
         return { ok: false, error: 'unverified_deal', message: 'Look up the deal with find_deal before updating it.' };
       }
-      await crm.updateDealFollowUp(dealId, preference);
+      await crm.updateDeal(dealId, { followUpPreference: preference });
       return { ok: true, status: 'updated', deal_id: dealId, follow_up_preference: preference };
     },
   },
@@ -267,7 +300,7 @@ const tools: Record<string, Tool> = {
     status: 'Checking booking status',
     definition: {
       name: 'get_booking_status',
-      description: 'Get delivery and vehicle allocation status for a confirmed booking. Provide booking_id (format MAH-1234) or phone.',
+      description: 'Get allocation status, VIN, expected delivery date, balance due and payment link for a confirmed booking. Provide booking_id (format MAH-1234) or phone.',
       parameters: {
         type: 'object',
         properties: {
@@ -279,6 +312,7 @@ const tools: Record<string, Tool> = {
     async handler(args, ctx) {
       requireOne(args, ['booking_id', 'phone']);
       let deals: crm.Deal[];
+      let contacts: crm.Contact[] = [];
 
       if (args.booking_id) {
         const bookingId = validate.bookingId(args.booking_id);
@@ -287,11 +321,12 @@ const tools: Record<string, Tool> = {
           return notFound(`No booking found with ID ${bookingId}.`, 'Ask the customer to recheck the booking ID or share their registered mobile number instead.');
         }
       } else {
-        const { contacts, deals: all, repeatMiss } = await dealsByPhone(validate.phone(args.phone), ctx);
-        if (!contacts.length) {
-          return phoneNotFound(repeatMiss, 'ask for the booking ID from their booking receipt.');
+        const result = await dealsByPhone(validate.phone(args.phone), ctx);
+        if (!result.contacts.length) {
+          return phoneNotFound(result.repeatMiss, 'ask for the booking ID from their booking receipt.');
         }
-        deals = all;
+        deals = result.deals;
+        contacts = result.contacts;
       }
 
       const booked = deals.filter((d) => d.stage === crm.BOOKED_STAGE);
@@ -306,7 +341,7 @@ const tools: Record<string, Tool> = {
 
       booked.forEach((d) => ctx.knownDealIds.add(d.id));
       ctx.remember({ customer_name: booked[0].contact?.name, booking_id: booked[0].bookingId ?? undefined });
-      return { ok: true, bookings: booked.map(describeBooking) };
+      return { ok: true, bookings: await Promise.all(booked.map((d) => describeBooking(d, contacts))) };
     },
   },
 

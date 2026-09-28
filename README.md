@@ -10,7 +10,7 @@ The agent detects where a customer is in the lifecycle, answers from a local veh
 |---|---|---|---|
 | New Lead | Models, variants, prices, features | Answers from `data/vehicles.json`, offers a test drive, collects name, phone, email and city, confirms, creates the lead | Create Lead |
 | Ongoing Pipeline | Test drive confirmation, quotation, dealer contact | Finds the deal by phone or deal ID, reports stage, test drive time, quotation and dealer, saves follow-up preference | Search Contacts/Deals, update Deal |
-| Booked Vehicle | Delivery, allocation, balance payment | Finds the Closed Won deal by booking ID or phone and reports Allocation Status | Search Deals |
+| Booked Vehicle | Delivery, allocation, balance payment | Finds the Closed Won deal by booking ID or phone and reports Allocation Status, VIN, expected delivery and balance due, with a payment link when a balance is outstanding | Search Deals |
 | Service | Service booking or complaint | Finds the owner by phone (registers them as a new contact if not found), collects registration no, odometer, issue, service type and service center, confirms, creates the case and shares its case number | Search/create Contact, create Case |
 
 ## Architecture
@@ -44,6 +44,7 @@ lib/
   zoho.ts              OAuth token cache, authenticated requests, 401 retry, 204 handling
   crm.ts               Leads, Contacts, Deals, Cases operations
   catalog.ts           Vehicle catalog lookup
+  dealers.ts           Dealer lookup by city
   validation.ts        Phone, email, booking ID, registration no, odometer validators
   session.ts           In-memory sessions
   agent/
@@ -51,6 +52,7 @@ lib/
     prompt.ts          System prompt
     loop.ts            Stage detection and tool-calling loop
 data/vehicles.json     XUV700, Thar, Scorpio-N variants, prices and features
+data/dealers.json      Demo dealership directory by city
 scripts/
   seed.ts              Creates the demo CRM records if missing
   test-zoho.ts         Smoke test against the live CRM
@@ -64,7 +66,7 @@ Requires Node.js 20.6 or later.
 
 1. In Zoho CRM (India data center), create these single-line custom fields:
    - Leads: Vehicle Model, Preferred City
-   - Deals: Vehicle Model, Booking ID, Allocation Status, Test Drive Time, Follow Up Preference
+   - Deals: Vehicle Model, Booking ID, Allocation Status, Test Drive Time, Follow Up Preference, VIN; plus Expected Delivery (date) and Balance Amount (currency)
    - Cases: Registration No, Odometer, Service Center
 
    To give customers short case numbers such as `CS-1001`, open Setup > Customization > Modules and Fields > Cases, edit the Case Number field and set a prefix and starting number. Without this, Zoho generates long numeric case numbers.
@@ -117,9 +119,11 @@ Other scripts: `npm run typecheck`, `npm run build`, `npm start`.
 | Record | Phone | Details |
 |---|---|---|
 | Lead: Rajesh Sharma | 9876500001 | Thar, Mumbai |
-| Contact + Deal: Priya Patel | 9876500002 | "Priya Patel - XUV700", Qualification, test drive 30 Sep 2026, 11:00 AM |
-| Contact + Deal: Vikram Mehta | 9876543210 | "Vikram Mehta - Scorpio-N Z8L", Closed Won, booking MAH-9921, In Transit |
-| Contact: Amit Verma | 9876543201 | Service case demo |
+| Contact + Deal: Priya Patel | 9876500002 | Mumbai. "Priya Patel - XUV700", Qualification, test drive 30 Sep 2026, 11:00 AM |
+| Contact + Deal: Vikram Mehta | 9876543210 | Pune. "Vikram Mehta - Scorpio-N Z8L", Closed Won, booking MAH-9921, In Transit, VIN MA1TA2NE4P1234567, expected delivery 2026-10-10, balance ₹16,00,000 |
+| Contact: Amit Verma | 9876543201 | Mumbai. Service case demo |
+
+The seed fills in empty fields on existing demo records (for example the booking details or a contact's Mailing City) but never overwrites values that are already set.
 
 ## Sample conversations
 
@@ -141,14 +145,18 @@ These are from test runs against the live CRM; replies are shortened.
 > **User:** Is my test drive confirmed? Also what quotation did I get? My number is 9876500002
 > **Agent:** *(Searching deals)* Your test drive is scheduled for 30 September 2026 at 11:00 AM, and your quotation is ₹22,00,000. Would you like to set a preferred follow-up channel or time?
 > **User:** WhatsApp on weekday evenings after 6 pm. Who is my dealer contact?
-> **Agent:** *(Updating follow-up preference)* Your follow-up preference is saved as WhatsApp, weekday evenings after 6 pm. Your dealer contact is Rohit Singh.
+> **Agent:** *(Updating follow-up preference)* Your follow-up preference is saved as WhatsApp, weekday evenings after 6 pm. The dealership will reach out to you on WhatsApp.
 
 **Booked Vehicle**
 
 > **User:** When will my Scorpio-N be delivered? Booking ID is MAH-12
 > **Agent:** That booking ID doesn't match our format (MAH- followed by 4 to 6 digits, e.g. MAH-9921). Could you share the correct ID or your registered mobile number?
 > **User:** My phone is 9876543210. Has the VIN been allocated and how much balance do I need to pay?
-> **Agent:** *(Checking booking status)* Your booking MAH-9921 for the Scorpio-N Z8L is In Transit: the vehicle has left the plant and is on its way to the dealership. VIN, delivery date and balance amount are not recorded in our system; your dealer Rohit Singh can share them.
+> **Agent:** *(Checking booking status)* Your booking MAH-9921 for the Scorpio-N Z8L is In Transit: the vehicle has left the plant and is on its way to the dealership. The VIN assigned is MA1TA2NE4P1234567, and the balance remaining is ₹16,00,000.
+> Payment link: https://pay.example.com/booking/MAH-9921
+> Dealer contact: Drive Assist Partner Dealership, Wakad, +91 20 4000 1200.
+> **User:** When will it be delivered?
+> **Agent:** Your Scorpio-N is expected to be delivered on 10 October 2026.
 
 **Stage switch to Service**
 
@@ -174,7 +182,8 @@ These are from test runs against the live CRM; replies are shortened.
 
 ## Design notes
 
-- **Grounded answers.** Vehicle facts come only from the catalog and customer data only from tool results. Booking results state explicitly what the CRM does not hold (VIN, delivery date, balance payment) so the model has nothing to fill in.
+- **Grounded answers.** Vehicle facts come only from the catalog and customer data only from tool results. Booking results list any of VIN, expected delivery and balance that are not yet recorded, so the model has nothing to fill in. Payment links are mock URLs (`https://pay.example.com/booking/<booking ID>`) returned only when a balance is due.
+- **Dealer contacts.** Customer-facing dealer details come from `data/dealers.json`, matched by the customer's city (the Contact's Mailing City, or a lead's preferred city). CRM record owners are never fetched, so internal user names and emails cannot reach customers. With no city match the agent says the dealership will reach out.
 - **Validation.** Tools validate and normalise input (Indian mobile numbers with or without +91, email, `MAH-1234` booking IDs, registration numbers including BH series, odometer). Failures return `invalid_input` with the field and a reason so the model asks again.
 - **No dead ends.** Every not-found result carries a `next_step`. The first miss on a phone number asks the customer to recheck it; a repeat miss moves on: asking for a deal or booking ID, offering a new enquiry, or registering a new contact in the service flow.
 - **Write safeguards.** `update_deal_followup` and `create_service_case` only accept deal and contact IDs returned by a lookup earlier in the same session, and `create_contact` only accepts a phone number that was searched and not found. Leads are de-duplicated by phone, and repeated create calls within a session return the existing record. The prompt requires an explicit confirmation before any create.

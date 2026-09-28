@@ -36,11 +36,19 @@ const SUGGESTIONS = [
 
 const newId = () => crypto.randomUUID();
 
-// Minimal formatting for model output: paragraphs, "-" or "1." lists and **bold**.
+// Minimal formatting for model output: paragraphs, "-" or "1." lists, **bold** and https links.
 function renderInline(text: string): ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-    part.startsWith('**') && part.endsWith('**') ? <strong key={i}>{part.slice(2, -2)}</strong> : <Fragment key={i}>{part}</Fragment>,
-  );
+  return text.split(/(\*\*[^*]+\*\*|https:\/\/[^\s)<>]+[^\s)<>.,;:!?])/g).map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={i}>{renderInline(part.slice(2, -2))}</strong>;
+    if (part.startsWith('https://')) {
+      return (
+        <a key={i} href={part} target="_blank" rel="noopener noreferrer">
+          {part}
+        </a>
+      );
+    }
+    return <Fragment key={i}>{part}</Fragment>;
+  });
 }
 
 function FormattedText({ text }: { text: string }) {

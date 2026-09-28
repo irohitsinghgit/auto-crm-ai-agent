@@ -1,0 +1,22 @@
+{
+  "note": "Demo dealership directory used for customer-facing dealer contacts.",
+  "aliases": {
+    "bengaluru": "bangalore",
+    "gurugram": "gurgaon",
+    "bombay": "mumbai",
+    "new delhi": "delhi",
+    "navi mumbai": "mumbai",
+    "thane": "mumbai"
+  },
+  "cities": {
+    "mumbai": { "name": "Drive Assist Partner Dealership, Andheri East", "phone": "+91 22 4000 1100" },
+    "pune": { "name": "Drive Assist Partner Dealership, Wakad", "phone": "+91 20 4000 1200" },
+    "delhi": { "name": "Drive Assist Partner Dealership, Moti Nagar", "phone": "+91 11 4000 1300" },
+    "gurgaon": { "name": "Drive Assist Partner Dealership, Sector 18", "phone": "+91 124 400 1400" },
+    "bangalore": { "name": "Drive Assist Partner Dealership, Whitefield", "phone": "+91 80 4000 1500" },
+    "chennai": { "name": "Drive Assist Partner Dealership, Guindy", "phone": "+91 44 4000 1600" },
+    "hyderabad": { "name": "Drive Assist Partner Dealership, Madhapur", "phone": "+91 40 4000 1700" },
+    "kolkata": { "name": "Drive Assist Partner Dealership, Salt Lake", "phone": "+91 33 4000 1800" },
+    "ahmedabad": { "name": "Drive Assist Partner Dealership, SG Highway", "phone": "+91 79 4000 1900" }
+  }
+}

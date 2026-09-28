@@ -24,6 +24,7 @@ export interface Contact {
   name: string;
   phone: string | null;
   email: string | null;
+  city: string | null;
 }
 
 export interface Deal {
@@ -33,12 +34,14 @@ export interface Deal {
   amount: number | null;
   closingDate: string | null;
   contact: { id: string; name: string } | null;
-  owner: { name: string; email: string } | null;
   vehicleModel: string | null;
   bookingId: string | null;
   allocationStatus: string | null;
   testDriveTime: string | null;
   followUpPreference: string | null;
+  vin: string | null;
+  expectedDelivery: string | null;
+  balanceAmount: number | null;
 }
 
 export interface ServiceCase {
@@ -48,10 +51,12 @@ export interface ServiceCase {
 }
 
 const LEAD_FIELDS = 'Full_Name,Phone,Mobile,Email,City,Preferred_City,Vehicle_Model';
-const CONTACT_FIELDS = 'Full_Name,Phone,Mobile,Email';
+const CONTACT_FIELDS = 'Full_Name,Phone,Mobile,Email,Mailing_City';
+// Owner is deliberately not fetched: the CRM user behind a record is never shown to customers.
 const DEAL_FIELDS = [
-  'Deal_Name', 'Stage', 'Amount', 'Closing_Date', 'Contact_Name', 'Owner',
+  'Deal_Name', 'Stage', 'Amount', 'Closing_Date', 'Contact_Name',
   'Vehicle_Model', 'Booking_ID', 'Allocation_Status', 'Test_Drive_Time', 'Follow_Up_Preference',
+  'VIN', 'Expected_Delivery', 'Balance_Amount',
 ].join(',');
 
 function toLead(r: ZohoRecord): Lead {
@@ -66,7 +71,7 @@ function toLead(r: ZohoRecord): Lead {
 }
 
 function toContact(r: ZohoRecord): Contact {
-  return { id: r.id, name: r.Full_Name, phone: r.Phone ?? r.Mobile ?? null, email: r.Email ?? null };
+  return { id: r.id, name: r.Full_Name, phone: r.Phone ?? r.Mobile ?? null, email: r.Email ?? null, city: r.Mailing_City ?? null };
 }
 
 function toDeal(r: ZohoRecord): Deal {
@@ -77,12 +82,14 @@ function toDeal(r: ZohoRecord): Deal {
     amount: r.Amount ?? null,
     closingDate: r.Closing_Date ?? null,
     contact: r.Contact_Name ? { id: r.Contact_Name.id, name: r.Contact_Name.name } : null,
-    owner: r.Owner ? { name: r.Owner.name, email: r.Owner.email } : null,
     vehicleModel: r.Vehicle_Model ?? null,
     bookingId: r.Booking_ID ?? null,
     allocationStatus: r.Allocation_Status ?? null,
     testDriveTime: r.Test_Drive_Time ?? null,
     followUpPreference: r.Follow_Up_Preference ?? null,
+    vin: r.VIN ?? null,
+    expectedDelivery: r.Expected_Delivery ?? null,
+    balanceAmount: r.Balance_Amount ?? null,
   };
 }
 
@@ -138,11 +145,30 @@ export async function findContactsByPhone(phone: string): Promise<Contact[]> {
   return (res?.data ?? []).map(toContact);
 }
 
-export async function createContact(input: { firstName: string; lastName: string; phone: string; email?: string }): Promise<string> {
+export async function getContact(id: string): Promise<Contact | null> {
+  const res = await zoho.get<ListResponse>(`/Contacts/${id}`, { fields: CONTACT_FIELDS });
+  return res?.data?.[0] ? toContact(res.data[0]) : null;
+}
+
+export async function createContact(input: { firstName: string; lastName: string; phone: string; email?: string; city?: string }): Promise<string> {
   const res = await zoho.post<WriteResponse>('/Contacts', {
-    data: [{ First_Name: input.firstName, Last_Name: input.lastName, Phone: input.phone, Mobile: input.phone, Email: input.email }],
+    data: [
+      {
+        First_Name: input.firstName,
+        Last_Name: input.lastName,
+        Phone: input.phone,
+        Mobile: input.phone,
+        Email: input.email,
+        Mailing_City: input.city,
+      },
+    ],
   });
   return createdId(res);
+}
+
+export async function updateContactCity(contactId: string, city: string): Promise<void> {
+  const res = await zoho.put<WriteResponse>(`/Contacts/${contactId}`, { data: [{ Mailing_City: city }] });
+  createdId(res);
 }
 
 export async function getDeal(id: string): Promise<Deal | null> {
@@ -171,7 +197,7 @@ export async function findDealsByName(name: string): Promise<Deal[]> {
   return (res?.data ?? []).map(toDeal);
 }
 
-export async function createDeal(input: {
+export interface DealInput {
   name: string;
   stage: string;
   contactId: string;
@@ -181,27 +207,38 @@ export async function createDeal(input: {
   bookingId?: string;
   allocationStatus?: string;
   testDriveTime?: string;
-}): Promise<string> {
-  const res = await zoho.post<WriteResponse>('/Deals', {
-    data: [
-      {
-        Deal_Name: input.name,
-        Stage: input.stage,
-        Contact_Name: { id: input.contactId },
-        Amount: input.amount,
-        Closing_Date: input.closingDate,
-        Vehicle_Model: input.vehicleModel,
-        Booking_ID: input.bookingId,
-        Allocation_Status: input.allocationStatus,
-        Test_Drive_Time: input.testDriveTime,
-      },
-    ],
-  });
+  followUpPreference?: string;
+  vin?: string;
+  expectedDelivery?: string;
+  balanceAmount?: number;
+}
+
+// Undefined values are dropped by JSON serialisation, so partial updates only touch the fields given.
+function toDealRecord(input: Partial<DealInput>) {
+  return {
+    Deal_Name: input.name,
+    Stage: input.stage,
+    Contact_Name: input.contactId ? { id: input.contactId } : undefined,
+    Amount: input.amount,
+    Closing_Date: input.closingDate,
+    Vehicle_Model: input.vehicleModel,
+    Booking_ID: input.bookingId,
+    Allocation_Status: input.allocationStatus,
+    Test_Drive_Time: input.testDriveTime,
+    Follow_Up_Preference: input.followUpPreference,
+    VIN: input.vin,
+    Expected_Delivery: input.expectedDelivery,
+    Balance_Amount: input.balanceAmount,
+  };
+}
+
+export async function createDeal(input: DealInput): Promise<string> {
+  const res = await zoho.post<WriteResponse>('/Deals', { data: [toDealRecord(input)] });
   return createdId(res);
 }
 
-export async function updateDealFollowUp(dealId: string, preference: string): Promise<void> {
-  const res = await zoho.put<WriteResponse>(`/Deals/${dealId}`, { data: [{ Follow_Up_Preference: preference }] });
+export async function updateDeal(dealId: string, changes: Partial<DealInput>): Promise<void> {
+  const res = await zoho.put<WriteResponse>(`/Deals/${dealId}`, { data: [toDealRecord(changes)] });
   createdId(res);
 }
 

@@ -191,6 +191,11 @@
   padding-left: 20px;
 }
 
+.assistantBubble a {
+  color: var(--accent);
+  font-weight: 550;
+}
+
 .tools {
   display: flex;
   flex-wrap: wrap;

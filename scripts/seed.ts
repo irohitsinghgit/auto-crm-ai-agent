@@ -1,14 +1,20 @@
 import * as crm from '../lib/crm';
 
-// Safe to run repeatedly: every record is looked up first and only created when missing.
+// Safe to run repeatedly: records are looked up first and created only when missing. On existing
+// records, fields that are empty in the CRM are filled in; values already set are never overwritten.
 
 interface SeedContact {
   firstName: string;
   lastName: string;
   phone: string;
   email: string;
-  deal?: Omit<Parameters<typeof crm.createDeal>[0], 'contactId'>;
+  city: string;
+  deal?: Omit<crm.DealInput, 'contactId'>;
 }
+
+const BACKFILL_DEAL_FIELDS = [
+  'vehicleModel', 'bookingId', 'allocationStatus', 'testDriveTime', 'vin', 'expectedDelivery', 'balanceAmount',
+] as const;
 
 const LEAD = {
   firstName: 'Rajesh',
@@ -26,6 +32,7 @@ const CONTACTS: SeedContact[] = [
     lastName: 'Patel',
     phone: '9876500002',
     email: 'priya.patel@example.com',
+    city: 'Mumbai',
     deal: {
       name: 'Priya Patel - XUV700',
       stage: 'Qualification',
@@ -40,6 +47,7 @@ const CONTACTS: SeedContact[] = [
     lastName: 'Mehta',
     phone: '9876543210',
     email: 'vikram.mehta@example.com',
+    city: 'Pune',
     deal: {
       name: 'Vikram Mehta - Scorpio-N Z8L',
       stage: crm.BOOKED_STAGE,
@@ -48,6 +56,9 @@ const CONTACTS: SeedContact[] = [
       vehicleModel: 'Scorpio-N Z8L',
       bookingId: 'MAH-9921',
       allocationStatus: 'In Transit',
+      vin: 'MA1TA2NE4P1234567',
+      expectedDelivery: '2026-10-10',
+      balanceAmount: 1600000,
     },
   },
   {
@@ -55,11 +66,12 @@ const CONTACTS: SeedContact[] = [
     lastName: 'Verma',
     phone: '9876543201',
     email: 'amit@example.com',
+    city: 'Mumbai',
   },
 ];
 
-function log(action: 'exists' | 'created', label: string, id: string) {
-  console.log(`${action.padEnd(8)} ${label} (${id})`);
+function log(action: 'exists' | 'created' | 'updated', label: string, id: string, detail = '') {
+  console.log(`${action.padEnd(8)} ${label} (${id})${detail ? `  ${detail}` : ''}`);
 }
 
 async function seedLead() {
@@ -69,15 +81,36 @@ async function seedLead() {
 }
 
 async function seedContact({ deal, ...contact }: SeedContact) {
-  const label = `${contact.firstName} ${contact.lastName}`;
+  const label = `Contact ${contact.firstName} ${contact.lastName}`;
   const [existing] = await crm.findContactsByPhone(contact.phone);
-  const contactId = existing?.id ?? (await crm.createContact(contact));
-  log(existing ? 'exists' : 'created', `Contact ${label}`, contactId);
+  let contactId: string;
 
-  if (!deal) return;
-  const [existingDeal] = await crm.findDealsByName(deal.name);
-  if (existingDeal) return log('exists', `Deal ${deal.name}`, existingDeal.id);
-  log('created', `Deal ${deal.name}`, await crm.createDeal({ ...deal, contactId }));
+  if (!existing) {
+    contactId = await crm.createContact(contact);
+    log('created', label, contactId);
+  } else if (!existing.city) {
+    contactId = existing.id;
+    await crm.updateContactCity(contactId, contact.city);
+    log('updated', label, contactId, `Mailing_City=${contact.city}`);
+  } else {
+    contactId = existing.id;
+    log('exists', label, contactId);
+  }
+
+  if (deal) await seedDeal(deal, contactId);
+}
+
+async function seedDeal(deal: Omit<crm.DealInput, 'contactId'>, contactId: string) {
+  const [existing] = await crm.findDealsByName(deal.name);
+  if (!existing) {
+    return log('created', `Deal ${deal.name}`, await crm.createDeal({ ...deal, contactId }));
+  }
+
+  const missing = BACKFILL_DEAL_FIELDS.filter((key) => deal[key] != null && existing[key] == null);
+  if (!missing.length) return log('exists', `Deal ${deal.name}`, existing.id);
+
+  await crm.updateDeal(existing.id, Object.fromEntries(missing.map((key) => [key, deal[key]])));
+  log('updated', `Deal ${deal.name}`, existing.id, missing.join(', '));
 }
 
 try {
