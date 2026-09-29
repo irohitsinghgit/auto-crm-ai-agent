@@ -151,8 +151,3 @@ Any other number works as a new customer.
 - **Model fallback.** If a Groq model hits its rate limit, the agent switches to the next model in the list.
 - **Zoho tokens.** Access tokens are cached and refreshed automatically before they expire.
 
-## Limitations
-
-- **Rate limits.** Groq's free tier limits tokens per minute and per day for each model. Fallback models help; a paid plan removes the limits.
-- **Sessions** are kept in memory for 2 hours. They reset when the server restarts and aren't shared between servers. Use Redis or a database in `lib/session.ts` to scale.
-- **Demo only.** Vehicle prices are indicative, and payment links (`https://pay.example.com/...`) are fake.
