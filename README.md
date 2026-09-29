@@ -1,79 +1,75 @@
 # auto-crm-ai-agent
 
-Multistage AI chat agent for an automotive OEM with LLM tool calling and live Zoho CRM integration across leads, deals, bookings and service.
+An AI chat agent for a car maker, connected live to Zoho CRM.
 
-The agent detects where a customer is in the lifecycle, answers from a local vehicle catalog or the CRM, and writes back to Zoho CRM (Leads, Deals, Cases) in real time. Customers can switch topics mid-conversation.
+It figures out where the customer is in their journey (new enquiry, ongoing deal, booked vehicle or service), answers their questions, and saves leads, follow-ups and service cases straight to Zoho. Customers can switch topics at any point in the chat.
 
-## Customer stages
+Built with Next.js, Groq (LLM with tool calling) and the Zoho CRM REST API.
 
-| Stage | Customer intent | What the agent does | Zoho |
+## What it can do
+
+| Stage | Customer asks about | Agent does | Zoho action |
 |---|---|---|---|
-| New Lead | Models, variants, prices, features | Answers from `data/vehicles.json`, offers a test drive, collects name, phone, email and city, confirms, creates the lead | Create Lead |
-| Ongoing Pipeline | Test drive confirmation, quotation, dealer contact | Finds the deal by phone or deal ID, reports stage, test drive time, quotation and dealer, saves follow-up preference | Search Contacts/Deals, update Deal |
-| Booked Vehicle | Delivery, allocation, balance payment | Finds the Closed Won deal by booking ID or phone and reports Allocation Status, VIN, expected delivery and balance due, with a payment link when a balance is outstanding | Search Deals |
-| Service | Service booking or complaint | Finds the owner by phone (registers them as a new contact if not found), collects registration no, odometer, issue, service type and service center, confirms, creates the case and shares its case number | Search/create Contact, create Case |
+| **New Lead** | Models, variants, prices, features | Answers from the vehicle catalog, offers a test drive, collects name, phone, email and city, then creates a lead | Create Lead |
+| **Ongoing Pipeline** | Test drive, quotation, dealer | Finds the deal by phone or deal ID, shares its status and saves a follow-up preference | Search and update Deal |
+| **Booked Vehicle** | Delivery, VIN, balance payment | Finds the booking by booking ID or phone and shares allocation status, VIN, delivery date and balance (with a payment link) | Search Deals |
+| **Service** | Service booking or complaint | Finds the owner by phone (or registers them), collects vehicle and issue details, then creates a service case | Search/create Contact, create Case |
 
-## Architecture
+## How it works
 
 ```mermaid
 flowchart LR
-    UI["Chat UI<br/>app/page.tsx"] -- "POST /api/chat<br/>SSE stream" --> API["API route<br/>app/api/chat/route.ts"]
-    API --> SES[("Session store<br/>in-memory Map")]
-    API --> LOOP["Agent loop<br/>lib/agent/loop.ts"]
-    LOOP --> STAGE["Stage detection<br/>keywords + tool used"]
-    LOOP <-- "streamed completions<br/>tool calls" --> GROQ["Groq API"]
-    LOOP --> TOOLS["Tool router<br/>lib/agent/tools.ts"]
-    TOOLS --> VAL["Input validation"]
-    TOOLS --> CAT["Vehicle catalog<br/>data/vehicles.json"]
-    TOOLS --> CRM["CRM modules<br/>lib/crm.ts"]
-    CRM --> ZC["Zoho client<br/>lib/zoho.ts"]
-    ZC -- "OAuth refresh<br/>cached token" --> ACC["accounts.zoho.in"]
-    ZC -- "REST v8" --> ZOHO[("Zoho CRM<br/>Leads, Contacts, Deals, Cases")]
+    UI["Chat UI"] -- "SSE stream" --> API["/api/chat"]
+    API --> LOOP["Agent loop"]
+    LOOP <--> GROQ["Groq LLM"]
+    LOOP --> TOOLS["Tools"]
+    TOOLS --> CAT["Vehicle catalog"]
+    TOOLS --> ZOHO[("Zoho CRM")]
 ```
 
-Each user message runs through the loop: LLM, tool calls, tool results back to the LLM, up to 5 rounds until a final answer. The route streams `stage`, `tool_start`, `tool_end`, `text`, `done` and `error` events to the UI.
+For each message, the agent loop sends the chat to the LLM, runs any tools it asks for, and feeds the results back. This repeats (up to 5 rounds) until the LLM gives a final answer, which is streamed to the UI.
 
 ## Project structure
 
 ```
 app/
-  api/chat/route.ts    SSE chat endpoint (POST) and session reset (DELETE)
-  page.tsx             Chat UI
-  page.module.css
+  api/chat/route.ts   Chat endpoint (streams replies, DELETE resets the session)
+  page.tsx            Chat UI
 lib/
-  zoho.ts              OAuth token cache, authenticated requests, 401 retry, 204 handling
-  crm.ts               Leads, Contacts, Deals, Cases operations
-  catalog.ts           Vehicle catalog lookup
-  dealers.ts           Dealer lookup by city
-  validation.ts        Phone, email, booking ID, registration no, odometer validators
-  session.ts           In-memory sessions
-  agent/
-    tools.ts           Tool schemas and handlers
-    prompt.ts          System prompt
-    loop.ts            Stage detection and tool-calling loop
-    llm.ts             Groq streaming with model fallback on rate limits
-data/vehicles.json     XUV700, Thar, Scorpio-N variants, prices and features
-data/dealers.json      Demo dealership directory by city
+  agent/              Agent loop, tools, system prompt, Groq client
+  zoho.ts             Zoho auth and API requests
+  crm.ts              Leads, Contacts, Deals and Cases operations
+  catalog.ts          Vehicle lookup
+  dealers.ts          Dealer lookup by city
+  validation.ts       Phone, email, booking ID and other input checks
+  session.ts          In-memory chat sessions
+data/
+  vehicles.json       XUV700, Thar and Scorpio-N variants, prices, features
+  dealers.json        Demo dealers by city
 scripts/
-  seed.ts              Creates the demo CRM records if missing
-  test-zoho.ts         Smoke test against the live CRM
+  seed.ts             Creates demo CRM records
+  test-zoho.ts        Checks the Zoho connection and setup
 ```
 
 ## Setup
 
-Requires Node.js 20.6 or later.
+You need **Node.js 20.9 or later**, a Zoho CRM account (India data center) and a Groq account.
 
-### 1. Zoho CRM
+### 1. Add custom fields in Zoho CRM
 
-1. In Zoho CRM (India data center), create these single-line custom fields:
-   - Leads: Vehicle Model, Preferred City
-   - Deals: Vehicle Model, Booking ID, Allocation Status, Test Drive Time, Follow Up Preference, VIN; plus Expected Delivery (date) and Balance Amount (currency)
-   - Cases: Registration No, Odometer, Service Center
+Create these fields (single-line text unless noted):
 
-   To give customers short case numbers such as `CS-1001`, open Setup > Customization > Modules and Fields > Cases, edit the Case Number field and set a prefix and starting number. Without this, Zoho generates long numeric case numbers.
-2. Open https://api-console.zoho.in, add a **Self Client**, and note the client ID and secret.
-3. Under **Generate Code**, use the scope `ZohoCRM.modules.ALL,ZohoCRM.settings.fields.READ` and generate a grant code.
-4. Exchange the grant code for a refresh token within its validity window:
+- **Leads:** Vehicle Model, Preferred City
+- **Deals:** Vehicle Model, Booking ID, Allocation Status, Test Drive Time, Follow Up Preference, VIN, Expected Delivery (date), Balance Amount (currency)
+- **Cases:** Registration No, Odometer, Service Center
+
+Optional: for short case numbers like `CS-1001`, go to Setup > Customization > Modules and Fields > Cases, edit the Case Number field and set a prefix.
+
+### 2. Get a Zoho refresh token
+
+1. At https://api-console.zoho.in, add a **Self Client** and copy its client ID and secret.
+2. Under **Generate Code**, enter the scope `ZohoCRM.modules.ALL,ZohoCRM.settings.fields.READ` and generate a code.
+3. Swap the code for a refresh token (do this quickly, the code expires):
 
    ```bash
    curl -X POST https://accounts.zoho.in/oauth/v2/token \
@@ -85,123 +81,77 @@ Requires Node.js 20.6 or later.
 
    Copy `refresh_token` from the response.
 
-### 2. Groq
+### 3. Get a Groq API key
 
-Create an API key at https://console.groq.com/keys.
+Create one at https://console.groq.com/keys.
 
-### 3. Environment
+### 4. Create `.env`
 
-Create a `.env` file in the project root (it is git-ignored) with these variables:
+In the project root:
 
-| Variable | Description |
+```env
+ZOHO_CLIENT_ID=...
+ZOHO_CLIENT_SECRET=...
+ZOHO_REFRESH_TOKEN=...
+GROQ_API_KEY=...
+```
+
+Optional variables:
+
+| Variable | Default |
 |---|---|
-| `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET` | Self Client credentials |
-| `ZOHO_REFRESH_TOKEN` | Refresh token from step 1.4 |
 | `ZOHO_ACCOUNTS_URL` | `https://accounts.zoho.in` |
 | `ZOHO_API_DOMAIN` | `https://www.zohoapis.in` |
-| `GROQ_API_KEY` | Groq API key |
-| `GROQ_MODELS` | Optional, comma-separated fallback order; defaults to `openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b` |
+| `GROQ_MODELS` | `openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b` (fallback order) |
+| `GROQ_MODEL` | Model to try first, ahead of the list above |
 
-### 4. Install, verify, seed and run
+### 5. Install and run
 
 ```bash
 npm install
-npm run zoho:test   # token refresh, 401 retry, field check, search, create and delete a lead
-npm run seed        # idempotent: creates only missing demo records
-npm run dev         # http://localhost:3000
+npm run zoho:test   # checks the Zoho connection and custom fields
+npm run seed        # adds demo records (safe to run again)
+npm run dev         # open http://localhost:3000
 ```
 
 Other scripts: `npm run typecheck`, `npm run build`, `npm start`.
 
 ## Demo data
 
-| Record | Phone | Details |
+Use these phone numbers to try each stage:
+
+| Phone | Customer | Try |
 |---|---|---|
-| Lead: Rajesh Sharma | 9876500001 | Thar, Mumbai |
-| Contact + Deal: Priya Patel | 9876500002 | Mumbai. "Priya Patel - XUV700", Qualification, test drive 30 Sep 2026, 11:00 AM |
-| Contact + Deal: Vikram Mehta | 9876500003 | Pune. "Vikram Mehta - Scorpio-N Z8L", Closed Won, booking MAH-9921, In Transit, VIN MA1TA2NE4P1234567, expected delivery 2026-10-10, balance ₹16,00,000 |
-| Contact: Amit Verma | 9876500004 | Mumbai. Service case demo |
+| 9876500001 | Rajesh Sharma | Existing lead (Thar, Mumbai) |
+| 9876500002 | Priya Patel | Ongoing deal: XUV700, test drive on 30 Sep 2026, 11:00 AM |
+| 9876500003 | Vikram Mehta | Booked Scorpio-N Z8L: booking MAH-9921, In Transit, delivery 10 Oct 2026, ₹16,00,000 due |
+| 9876500004 | Amit Verma | Service request |
 
-The seed fills in empty fields on existing demo records (for example the booking details or a contact's Mailing City) but never overwrites values that are already set.
+Any other number works as a new customer.
 
-## Sample conversations
-
-These are from test runs against the live CRM; replies are shortened.
-
-**New Lead**
+## Example chat
 
 > **User:** Hi, I'm interested in the XUV700 AX7. What does it cost and does it get ADAS?
-> **Agent:** The XUV700 AX7 is priced between ₹19.49 lakh and ₹23.69 lakh ex-showroom and comes with Level 2 ADAS. Would you like to schedule a test drive? Could you share your full name and mobile number?
-> **User:** Yes. I'm Neha Kapoor, my number is 98123 45670
-> **Agent:** Great, Neha. Could you also share your email address and the city for the test drive?
-> **User:** neha.kapoor@example.com, and Pune
+> **Agent:** The XUV700 AX7 costs ₹19.49 to ₹23.69 lakh ex-showroom and comes with Level 2 ADAS. Would you like a test drive? Could you share your name and mobile number?
+> **User:** I'm Neha Kapoor, 98123 45670, neha.kapoor@example.com, Pune
 > **Agent:** Name: Neha Kapoor, Mobile: 9812345670, Email: neha.kapoor@example.com, Vehicle: XUV700 AX7, City: Pune. Shall I go ahead?
-> **User:** Yes, go ahead
+> **User:** Yes
 > **Agent:** *(Creating lead)* Your test drive request has been recorded. A dealership in Pune will contact you shortly.
 
-**Ongoing Pipeline**
+## Key design choices
 
-> **User:** Is my test drive confirmed? Also what quotation did I get? My number is 9876500002
-> **Agent:** *(Searching deals)* Your test drive is scheduled for 30 September 2026 at 11:00 AM, and your quotation is ₹22,00,000. Would you like to set a preferred follow-up channel or time?
-> **User:** WhatsApp on weekday evenings after 6 pm. Who is my dealer contact?
-> **Agent:** *(Updating follow-up preference)* Your follow-up preference is saved as WhatsApp, weekday evenings after 6 pm. The dealership will reach out to you on WhatsApp.
+- **No made-up answers.** Vehicle facts come only from the catalog, and customer details only from Zoho. Missing values are reported as not yet available.
+- **Confirm before saving.** Before creating a lead, contact or service case, the agent shows a summary and waits for the customer to say yes. If the reply is just "yes", the server saves it directly.
+- **No false "saved" messages.** If the agent says something was saved but no save actually happened, the reply is withdrawn and corrected.
+- **Safe writes.** The agent can only update records it looked up earlier in the same chat. An existing lead gets a note instead of a duplicate.
+- **Input checks.** Phone numbers, emails, booking IDs, registration numbers and odometer readings are validated. On bad input the agent asks again.
+- **No dead ends.** When a record isn't found, the agent suggests a next step (recheck the number, use a booking ID, start a new enquiry, or register).
+- **Private data stays private.** Dealer contacts come from `data/dealers.json`, never from internal CRM users.
+- **Model fallback.** If a Groq model hits its rate limit, the agent switches to the next model in the list.
+- **Zoho tokens.** Access tokens are cached and refreshed automatically before they expire.
 
-**Booked Vehicle**
+## Limitations
 
-> **User:** When will my Scorpio-N be delivered? Booking ID is MAH-12
-> **Agent:** That booking ID doesn't match our format (MAH- followed by 4 to 6 digits, e.g. MAH-9921). Could you share the correct ID or your registered mobile number?
-> **User:** My phone is 9876500003. Has the VIN been allocated and how much balance do I need to pay?
-> **Agent:** *(Checking booking status)* Your booking MAH-9921 for the Scorpio-N Z8L is In Transit: the vehicle has left the plant and is on its way to the dealership. The VIN assigned is MA1TA2NE4P1234567, and the balance remaining is ₹16,00,000.
-> Payment link: https://pay.example.com/booking/MAH-9921
-> Dealer contact: Drive Assist Partner Dealership, Wakad, +91 20 4000 1200.
-> **User:** When will it be delivered?
-> **Agent:** Your Scorpio-N is expected to be delivered on 10 October 2026.
-
-**Stage switch to Service**
-
-> **User:** What's the ground clearance of the Thar?
-> **Agent:** The Thar offers 226 mm of ground clearance. Would you like to schedule a test drive?
-> **User:** Actually I already own a Thar and the clutch is giving trouble. My number is 9876500004
-> **Agent:** *(Looking up customer)* Could you share your registration number and current odometer reading?
-> **User:** Registration is MH 12 KT 4521 and it has done 18,400 km
-> **Agent:** Which service center would you prefer?
-> **User:** Wakad service center in Pune. The clutch pedal feels hard and there's a grinding noise while shifting.
-> **Agent:** Registration MH 12 KT 4521, 18,400 km, clutch issue, Wakad, Pune. Please confirm.
-> **User:** Yes, that's correct
-> **Agent:** *(Creating service request)* Your service case has been created with status New. The workshop will contact you to schedule an appointment.
-
-**Service for an owner not yet in the CRM**
-
-> **User:** My XUV700's AC is not cooling, I want to book a service. My number is 9811199988
-> **Agent:** *(Looking up customer)* I couldn't find 9811199988 in our system. Could you confirm the number is correct?
-> **User:** Yes, 98111 99988 is correct. I'm Sanjay Rao, sanjay.rao@example.com
-> **Agent:** Name: Sanjay Rao, Mobile: 9811199988, Email: sanjay.rao@example.com. May I register you with these details?
-> **User:** Yes please
-> **Agent:** *(Registering customer)* You're registered. Could you share your registration number and odometer reading?
-
-## Design notes
-
-- **Grounded answers.** Vehicle facts come only from the catalog and customer data only from tool results. Booking results list any of VIN, expected delivery and balance that are not yet recorded, so the model has nothing to fill in. Payment links are mock URLs (`https://pay.example.com/booking/<booking ID>`) returned only when a balance is due.
-- **Test drive pitch.** In the New Lead stage, every answer about a model, variant, price or feature ends with a short test drive pitch that names only the lead details still missing. It stops once a test drive enquiry is registered in the chat. The prompt makes this a hard rule, and the loop appends the pitch if a catalog answer ever arrives without it.
-- **Rendering.** Assistant replies are rendered as markdown with `react-markdown` (GFM lists, bold, italics, links, line breaks). Raw HTML is skipped and the output passes through `rehype-sanitize`, so unsafe links and markup never reach the page.
-- **Dealer contacts.** Customer-facing dealer details come from `data/dealers.json`, matched by the customer's city (the Contact's Mailing City, or a lead's preferred city). CRM record owners are never fetched, so internal user names and emails cannot reach customers. With no city match the agent says the dealership will reach out.
-- **Validation.** Tools validate and normalise input (Indian mobile numbers with or without +91, email, `MAH-1234` booking IDs, registration numbers including BH series, odometer). Failures return `invalid_input` with the field and a reason so the model asks again.
-- **No dead ends.** Every not-found result carries a `next_step`. The first miss on a phone number asks the customer to recheck it; a repeat miss moves on: asking for a deal or booking ID, offering a new enquiry, or registering a new contact in the service flow.
-- **Write safeguards.** `update_deal_followup` and `create_service_case` only accept deal and contact IDs returned by a lookup earlier in the same session, and `create_contact` only accepts a phone number that was searched and not found. `create_lead` refuses a phone number that matched a different person's CRM record earlier in the chat unless the customer confirms it is theirs, and follow-up updates take the channel and time from the customer's latest message and read the saved value back from Zoho.
-- **Customer vs looked-up data.** The session keeps details the customer stated separate from records found by lookups, and the prompt presents them separately, so a new enquiry in the same chat does not inherit another customer's name or number.
-- **Confirmation before writes.** `create_lead`, `create_contact` and `create_service_case` take two calls. The first saves nothing and returns a summary for the customer; the write happens only when a later customer message approves it and the tool is called again with `customer_confirmed`. The model cannot confirm within the same reply, and changing any detail requires a new summary. When the customer's next message is a plain approval ("yes", "go ahead"), the server runs the pending call itself instead of relying on the model to make it; replies carrying changes or questions go to the model, which sees pending confirmations in the system prompt. A plain approval also counts when the reply it answers displayed every value being saved (for example a summary the model wrote itself); partial or paraphrased summaries do not.
-- **No false success.** If a reply claims a record was registered, created, saved or updated but no write tool succeeded in that turn, the streamed text is withdrawn, the model gets one correction round to make the call, and otherwise the customer is told plainly that nothing was saved.
-- **Turn log.** Each turn logs one line (`[turn] session=… #n model=… tools=…`) with the model used and each tool outcome, without customer data, so a conversation can be traced from the server log.
-- **Existing leads.** If the phone already belongs to a lead, no duplicate is created: the request is added as a Note on that lead ("Test drive request via chat") and the customer is told their details are already on file and the request has been noted. Repeated create calls within a session return the saved result.
-- **Zoho token handling.** The access token is cached in memory and refreshed 5 minutes before expiry; concurrent requests share one refresh; a 401 triggers one refresh and retry. HTTP 204 from search is treated as not found.
-- **Session state.** An in-memory Map keyed by session ID holds history, detected stage, collected details and verified CRM IDs. Sessions expire after 2 hours of inactivity. Only user messages and final replies are kept across turns; facts needed later (customer name, phone, deal, contact and booking IDs) are carried in the system prompt as known details.
-- **Stage detection.** A keyword pass gives the UI an immediate stage; the stage of any tool the model calls then confirms or corrects it.
-- **Model fallback.** Each Groq model has its own per-minute and per-day token quota. When a model returns 429, it is put on cooldown for the wait Groq reports and the same request continues on the next model in `GROQ_MODELS`. Transient network or 5xx errors and malformed tool calls are retried once on the same model.
-- **Errors.** Zoho failures reach the model as `crm_unavailable`. If every model is rate limited, the user sees either a daily-limit message or a "try again in N seconds" message with a Retry button; a failed turn is not saved, so retrying is safe.
-
-## Notes and limitations
-
-- **Model.** `llama-3.3-70b-versatile` is no longer available on Groq, so the primary model is `openai/gpt-oss-120b` with native tool calling, falling back to `openai/gpt-oss-20b` and `qwen/qwen3.8-27b`. Fallback replies may be slightly less capable than the primary model.
-- **Rate limits.** Groq's free tier allows 8,000 tokens per minute and 200,000 tokens per day per model. Fallback extends this across models; a paid tier removes the limits.
-- **Sessions** are held in process memory, so they reset on restart and are not shared across instances. Swap `lib/session.ts` for Redis or a database to scale out.
-- Vehicle prices are indicative ex-showroom figures for demo purposes.
+- **Rate limits.** Groq's free tier limits tokens per minute and per day for each model. Fallback models help; a paid plan removes the limits.
+- **Sessions** are kept in memory for 2 hours. They reset when the server restarts and aren't shared between servers. Use Redis or a database in `lib/session.ts` to scale.
+- **Demo only.** Vehicle prices are indicative, and payment links (`https://pay.example.com/...`) are fake.
